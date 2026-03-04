@@ -6,34 +6,11 @@ OwnerMap is a single-file browser tool that enumerates all your Entra ID (Azure 
 
 Open the HTML file. Connect. Get answers.
 
-![OwnerMap Screenshot](docs/screenshot.png)
-
----
-
-## On-Premises AD Coverage
-
-OwnerMap queries **Microsoft Graph**, not your on-premises Active Directory directly.
-
-**What this means in practice:**
-
-| Scenario | Coverage |
-|---|---|
-| Cloud-only Entra ID | ✅ Full coverage |
-| Hybrid — on-prem AD synced via Entra Connect | ✅ Synced groups appear in results, flagged with the `On-Prem` badge |
-| On-prem AD groups **not** synced to Entra | ❌ Not visible — Graph has no record of them |
-| Pure on-prem AD, no Entra ID | ❌ Not supported in this version |
-
-If your environment has unsynced or pure on-prem groups, the safest approach is to cross-reference the OwnerMap export against a `Get-ADGroup -Filter *` dump from a domain controller. A local PowerShell relay to bridge that gap is on the roadmap.
-
-> **Auditor note:** The `onPremisesSyncEnabled` flag on each group tells you whether it originated on-prem. If this field is populated, the group is mastered in your on-prem AD and Entra Connect is keeping it in sync. Owner assignments made in OwnerMap (once write-back ships) will need to be reflected in on-prem AD as well in hybrid environments.
-
----
+![OwnerMap](docs/ownermap-icon.png)
 
 ## Why This Exists
 
 When your helpdesk implements an access request process, they need to know *who approves* each entitlement. In most environments, AD/Entra group ownership is never assigned systematically — it's the forgotten first step. OwnerMap gives you a complete picture in minutes so you can assign owners before your auditor asks.
-
----
 
 ## Features
 
@@ -46,64 +23,126 @@ When your helpdesk implements an access request process, they need to know *who 
 - **Interactive UI** — filter by No Owner / Security / M365 / On-Prem, search by name/description/owner, sort any column, expand rows to see full member lists
 - **CSV export** — full dump of all groups, owners, and members for offline review or ticket generation
 
----
+## Step 1 — Register an App in Entra ID
 
-## Quickstart
-
-### 1. Download
-
-```bash
-git clone https://github.com/YOUR_USERNAME/ownermap.git
-```
-
-Or just download `ownermap.html` directly.
-
-### 2. Register an App in Entra ID
+This is a one-time setup. OwnerMap uses Microsoft Graph and requires an app registration so Microsoft knows what application is making the request.
 
 Go to **Entra ID → App registrations → New registration**
 
-- Name: `OwnerMap` (or anything)
-- Redirect URI: `Web` → `http://localhost` (for delegated mode)
+- **Name:** `OwnerMap` (or anything descriptive)
+- **Supported account types:** Single tenant
+- **Redirect URI:** Leave blank for now — you will add this after choosing how to serve the file (see Step 2)
 
-#### Required API Permissions
+### Required API Permissions
+
+Go to **API permissions → Add a permission → Microsoft Graph** and add the following:
 
 | Permission | Type | Purpose |
 |---|---|---|
-| `Group.Read.All` | Delegated or Application | Read all groups |
-| `GroupMember.Read.All` | Delegated or Application | Read group members |
-| `User.Read.All` | Delegated or Application | Resolve user display names and UPNs |
-| `Directory.Read.All` | Delegated or Application | Read on-prem sync attributes |
+| `Group.Read.All` | Delegated | Read all groups |
+| `GroupMember.Read.All` | Delegated | Read group members |
+| `User.Read.All` | Delegated | Resolve user display names and UPNs |
+| `Directory.Read.All` | Delegated | Read on-prem sync attributes |
 
-For **Current User mode** (recommended): grant as **Delegated** permissions.  
-For **App Registration mode**: grant as **Application** permissions and click **Grant admin consent**.
+Click **Grant admin consent** after adding all four.
 
-### 3. Open the Tool
+## Step 2 — Choose How to Serve OwnerMap
 
-Open `ownermap.html` in your browser. Enter your **Tenant ID** and **Client ID**, choose your auth mode, and click **Connect & Enumerate Groups**.
+OwnerMap uses Microsoft's MSAL.js library to handle sign-in. MSAL requires a **redirect URI** — the exact URL where the app is served — to be registered in your Entra app registration. This is a security requirement by Microsoft, not OwnerMap.
 
----
+> **The redirect URI must exactly match the URL you use to open the file.** Even a trailing slash difference will cause a sign-in error.
+
+Choose the serving method that fits your situation:
+
+### Option A — SharePoint (Recommended for Internal Teams)
+
+Best for sharing with helpdesk staff, auditors, or anyone in your org who shouldn't need any setup.
+
+**Steps:**
+1. Upload `ownermap.html` to a SharePoint document library
+2. Open the file in SharePoint and copy the full URL from your browser address bar, for example:
+   ```
+   https://yourcompany.sharepoint.com/sites/IT/Shared%20Documents/ownermap.html
+   ```
+3. Go to your app registration → **Authentication → Add a platform → Web**
+4. Paste that exact URL as the Redirect URI and click Save
+5. Share the SharePoint link with your team — they click it, sign in with their Microsoft account, and the tool runs
+
+### Option B — GitHub Pages (Recommended for Public / Cross-Org Use)
+
+Best for making the tool available outside your org, sharing with external auditors, or keeping a stable public URL.
+
+**Steps:**
+1. Fork this repo or push it to your own GitHub account
+2. Go to **Settings → Pages → Source:** `main` branch, `/ (root)` folder, click Save
+3. GitHub will give you a URL like:
+   ```
+   https://yourusername.github.io/OwnerMap/ownermap.html
+   ```
+4. Go to your app registration → **Authentication → Add a platform → Web**
+5. Paste that GitHub Pages URL as the Redirect URI and click Save
+6. Anyone can now open that URL, sign in, and run the tool
+
+### Option C — Local Python Web Server (Technical Users / One-Off Audits)
+
+Best for running a quick audit on your own machine without uploading the file anywhere.
+
+**Steps:**
+1. Download `ownermap.html` to a local folder
+2. Open a terminal in that folder and run:
+
+   **macOS / Linux:**
+   ```bash
+   python3 -m http.server 8080
+   ```
+
+   **Windows:**
+   ```powershell
+   python -m http.server 8080
+   ```
+
+3. Open `http://localhost:8080/ownermap.html` in your browser
+4. Go to your app registration → **Authentication → Add a platform → Web**
+5. Add `http://localhost:8080/ownermap.html` as the Redirect URI and click Save
+
+> **Note:** The server must be running every time you use the tool. Stop it with `Ctrl+C` when done.
+
+### Redirect URI Quick Reference
+
+| Serving Method | Redirect URI to Register |
+|---|---|
+| SharePoint | `https://yourcompany.sharepoint.com/sites/IT/Shared%20Documents/ownermap.html` |
+| GitHub Pages | `https://yourusername.github.io/OwnerMap/ownermap.html` |
+| Local Python server | `http://localhost:8080/ownermap.html` |
+
+You can register multiple redirect URIs in the same app registration if you use more than one method.
+
+## Step 3 — Open the Tool
+
+Open OwnerMap using whichever URL matches the redirect URI you registered. Enter your **Tenant ID** and **Client ID** from the app registration, select **Current User**, and click **Sign In with Microsoft**.
+
+Your Tenant ID and Client ID are found in **Entra ID → App registrations → OwnerMap → Overview**.
 
 ## Auth Modes
 
 ### Current User (Recommended)
 
-Uses MSAL.js popup sign-in. The signed-in user's permissions apply. Best for individual auditors and compliance teams.
+Uses MSAL.js popup sign-in. The signed-in user's own permissions apply — no secrets required. If the user is already signed into Microsoft 365 in their browser, authentication happens silently with no popup at all.
 
 **Requirements:**
-- App registration with Delegated permissions
-- Your account must have sufficient directory read access (Global Reader or equivalent)
+- App registration with Delegated permissions (see Step 1)
+- Redirect URI registered for the URL you are serving from (see Step 2)
+- User must have Global Reader role or equivalent directory read access
 
-### App Registration (Unattended / Automation)
+### App Registration (Unattended / Service Account)
 
-Uses client credentials (client ID + secret). Best for scheduled audits or service accounts.
+Uses a client ID and client secret directly. No interactive sign-in. Best for scheduled audits or environments where you cannot use delegated auth.
 
 **Requirements:**
-- App registration with Application permissions + admin consent
-- Keep client secrets out of shared machines — the secret lives in browser session memory
+- App registration with **Application** permissions (not Delegated) and admin consent
+- A client secret generated under **Certificates & secrets**
 
-> **Security note:** Never commit client secrets. If you automate this, use a secrets manager or Azure Key Vault to inject the secret at runtime.
-
----
+> **Security note:** Never commit client secrets to a repository. The secret lives in browser session memory — use this mode on secured, trusted workstations only.
 
 ## Output
 
@@ -124,8 +163,6 @@ Uses client credentials (client ID + secret). Best for scheduled audits or servi
 ### CSV Export
 Columns: `Group Name, Description, Type, Source, Owner Count, Owners (UPN), Member Count, Members (Display Name + UPN), SOX Risk`
 
----
-
 ## Group Types
 
 | Badge | Meaning |
@@ -136,7 +173,20 @@ Columns: `Group Name, Description, Type, Source, Owner Count, Owners (UPN), Memb
 | `On-Prem` | Synced from on-premises Active Directory via Entra Connect |
 | `Cloud` | Cloud-only group |
 
----
+## On-Premises AD Coverage
+
+OwnerMap queries **Microsoft Graph**, not your on-premises Active Directory directly.
+
+| Scenario | Coverage |
+|---|---|
+| Cloud-only Entra ID | ✅ Full coverage |
+| Hybrid — on-prem AD synced via Entra Connect | ✅ Synced groups appear in results, flagged with the `On-Prem` badge |
+| On-prem AD groups **not** synced to Entra | ❌ Not visible — Graph has no record of them |
+| Pure on-prem AD, no Entra ID | ❌ Not supported in this version |
+
+If your environment has unsynced or pure on-prem groups, cross-reference the OwnerMap export against a `Get-ADGroup -Filter *` dump from a domain controller. A local PowerShell relay to bridge that gap is on the roadmap.
+
+> **Auditor note:** The `onPremisesSyncEnabled` flag on each group tells you whether it originated on-prem. If this field is populated, the group is mastered in your on-prem AD and Entra Connect is keeping it in sync.
 
 ## Compliance Use Cases
 
@@ -144,8 +194,6 @@ Columns: `Group Name, Description, Type, Source, Owner Count, Owners (UPN), Memb
 - **Access Review Prep** — enumerate all entitlements before a quarterly UAR
 - **Joiner/Mover/Leaver** — find groups with no owner to prevent orphaned memberships
 - **Zero Trust Readiness** — baseline all group memberships before implementing PIM/JIT access
-
----
 
 ## Roadmap
 
@@ -156,18 +204,11 @@ Columns: `Group Name, Description, Type, Source, Owner Count, Owners (UPN), Memb
 - [ ] Scheduled export / email digest mode
 - [ ] SCIM / CSV import for bulk owner assignment
 
----
-
 ## Contributing
 
 PRs welcome. Please open an issue first for anything beyond bug fixes.
-
----
 
 ## License
 
 MIT — free to use, modify, and distribute. Attribution appreciated.
 
----
-
-*Built by [HexStrike](https://hexstrike.com) — cybersecurity consulting for the real world.*
