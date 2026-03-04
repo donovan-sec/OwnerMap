@@ -6,7 +6,26 @@ OwnerMap is a single-file browser tool that enumerates all your Entra ID (Azure 
 
 Open the HTML file. Connect. Get answers.
 
+![OwnerMap Screenshot](docs/screenshot.png)
 
+---
+
+## On-Premises AD Coverage
+
+OwnerMap queries **Microsoft Graph**, not your on-premises Active Directory directly.
+
+**What this means in practice:**
+
+| Scenario | Coverage |
+|---|---|
+| Cloud-only Entra ID | ✅ Full coverage |
+| Hybrid — on-prem AD synced via Entra Connect | ✅ Synced groups appear in results, flagged with the `On-Prem` badge |
+| On-prem AD groups **not** synced to Entra | ❌ Not visible — Graph has no record of them |
+| Pure on-prem AD, no Entra ID | ❌ Not supported in this version |
+
+If your environment has unsynced or pure on-prem groups, the safest approach is to cross-reference the OwnerMap export against a `Get-ADGroup -Filter *` dump from a domain controller. A local PowerShell relay to bridge that gap is on the roadmap.
+
+> **Auditor note:** The `onPremisesSyncEnabled` flag on each group tells you whether it originated on-prem. If this field is populated, the group is mastered in your on-prem AD and Entra Connect is keeping it in sync. Owner assignments made in OwnerMap (once write-back ships) will need to be reflected in on-prem AD as well in hybrid environments.
 
 ---
 
@@ -151,3 +170,4 @@ MIT — free to use, modify, and distribute. Attribution appreciated.
 
 ---
 
+*Built by [HexStrike](https://hexstrike.com) — cybersecurity consulting for the real world.*
