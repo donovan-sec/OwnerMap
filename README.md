@@ -62,22 +62,15 @@ Preview the plan without signing in:
 
 The portal clicks are the alternative in the guide. Use platform **Single-page application**, not Web. A Web redirect causes `AADSTS9002326`. Then **Grant admin consent**.
 
-Microsoft requires the redirect URI to match the address bar exactly, including `ownermap.html`.
+Microsoft requires the redirect URI to match the address bar exactly, including `ownermap.html`. `http://` is allowed only for localhost. The guide has three hosts: this PC, Azure Static Web Apps on the Free plan (no GitHub account), or an internal IIS, nginx, or Apache site over HTTPS.
 
-**GitHub Pages** (a stable link for the IT team): fork this repo, **Settings → Pages**, branch `main`, folder `/ (root)`. Open `https://yourusername.github.io/OwnerMap/ownermap.html` and pass that URL to the script.
+On a Windows admin PC, from the folder that contains `ownermap.html`:
 
-**A local web server** (a one-off check on your machine), from the folder that contains `ownermap.html`:
-
-```bash
-python3 -m http.server 8080
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\Serve-OwnerMap.ps1
 ```
 
-Open `http://localhost:8080/ownermap.html`. On Windows, `py -m http.server 8080` works when `python3` is not on the path. Stop the server with Ctrl+C when you are done.
-
-| How you open it | Redirect URI |
-|---|---|
-| GitHub Pages | `https://yourusername.github.io/OwnerMap/ownermap.html` |
-| Local Python server | `http://localhost:8080/ownermap.html` |
+Open `http://localhost:8080/ownermap.html`. If Python is already installed, `py -m http.server 8080` (Windows) or `python3 -m http.server 8080` serves the same folder. Stop the server with Ctrl+C when you are done. Register that localhost URL, and any shared `https` URL, with the script. Pass every URL in one `-RedirectUri` list.
 
 Open the URL you registered. Enter the tenant ID and client ID. Choose **Sign in and run the check**. If you are already signed in to Microsoft 365, the prompt may be brief. **Preview with sample data** shows a fictional tenant and does not contact Microsoft.
 
@@ -93,7 +86,7 @@ A check that says **Not checked** did not fail open. Sign-in dates or Conditiona
 
 ## Security posture
 
-- Static files only. No backend, and suitable for GitHub Pages.
+- Static files only. No backend. Host the folder on the admin PC, on Azure Static Web Apps, or on an internal web server.
 - Delegated Microsoft Graph only. The signed-in user's own rights apply.
 - No write permissions are requested, and the page never sends a change to Graph.
 - Tokens are stored with MSAL `cacheLocation: 'memory'`. Disconnecting drops them.

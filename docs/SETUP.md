@@ -41,51 +41,278 @@ OwnerMap asks only for delegated permissions (the app acts as the signed-in pers
 >
 > **What the picture should show:** **Users can register applications** set to Yes or No. If it is No, the person who runs the script needs Application Developer, Cloud Application Administrator, Application Administrator, or Global Administrator.
 
-## Pick the page address first
+## Where to put the page
 
-The redirect URI is the exact address of `ownermap.html` in the browser. You need that URL before you register the app. The script asks you to pass it. The portal asks you to paste it.
+Pick one host before you register the app. The redirect URI is the exact address of `ownermap.html` in the browser. The script asks you to pass it. The portal asks you to paste it.
 
 The address must match character for character: `https` or `http`, the host, the folder, and `ownermap.html`. A trailing slash is a different URI. A query string such as `?demo=1` is not part of the registered URI.
 
-### GitHub Pages (a stable link for the team)
+Microsoft sign-in allows `http://` only for `localhost` (and `127.0.0.1`). Any other hostname, including an internal server name and an Azure name, must be `https://`. Opening the file from Explorer uses `file://` and sign-in will fail.
 
-1. Fork this repository, or push a copy to your own GitHub account.
-2. In that GitHub repo, open **Settings > Pages**.
-3. Under **Build and deployment**, set **Source** to **Deploy from a branch**. Set the branch to `main` and the folder to `/ (root)`. Save.
-4. Wait until GitHub shows a site URL. The page you register is that URL plus the file name.
+You can register more than one address on the same app. A common pair is the localhost URL and the shared server URL. Pass every URL on one command. The script replaces the redirect list with exactly the URLs you pass.
 
-Example: `https://yourusername.github.io/OwnerMap/ownermap.html`
+| | Local admin PC | Azure Static Web Apps, Free | Internal web server |
+|---|---|---|---|
+| Choose this when | One admin runs the check on their own PC | The team wants one `https` link and the company can use Azure | The page should stay on the company network, and a Windows or Linux web server is already there |
+| Who can open it | Only that PC, while the command is running | Anyone with the link | People who can reach that server (office network or VPN) |
+| Address to register | `http://localhost:8080/ownermap.html` | `https://<name>.azurestaticapps.net/ownermap.html` | `https://ownermap.yourcompany.local/ownermap.html` |
+| Account you need | None beyond the Entra role in the table above | An Azure subscription. No GitHub account | An admin login on the web server |
+| Certificate | None. Localhost is the exception to HTTPS | Azure creates one, including a custom domain on the Free plan | A certificate the staff PCs already trust |
 
-> **Screenshot placeholder**
->
-> Replace this box with a picture from your own GitHub repository settings.
->
-> **Where to click:** the repository **Settings > Pages**.
->
-> **What the picture should show:** Source set to Deploy from a branch, branch `main`, folder `/ (root)`, and the site URL GitHub displays at the top.
+Replace `yourcompany.local` and `<name>` with the real names from your own setup.
 
-### A local server (a one-off check on your machine)
+### 1. Local admin PC
 
-From the folder that contains `ownermap.html`:
+Use this when you only need the check on one computer. Nothing is published to the internet. The page stops when you stop the command.
+
+You need two things side by side in one folder:
+
+- `ownermap.html`
+- a `src` folder with `hygiene.js` and `sample-tenant.js`
+
+If a Release is listed on the project site, download that zip. Otherwise open the project page and use **Download ZIP**. A GitHub account is not required for a public download. Unzip it. Do not open `ownermap.html` from the desktop. That uses `file://`.
+
+**Windows, no extra install.** Open PowerShell in the unzipped folder (the folder that contains `ownermap.html` and `scripts`) and run:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\Serve-OwnerMap.ps1
+```
+
+**Python, if it is already installed.** From that same folder:
+
+```powershell
+py -m http.server 8080
+```
+
+On a Mac or Linux admin PC:
 
 ```bash
 python3 -m http.server 8080
 ```
 
-On Windows, if `python3` is not recognized:
+Leave the window open. In the browser, open `http://localhost:8080/ownermap.html`.
 
-```bat
-py -m http.server 8080
+The Single-page application redirect URI for this option is:
+
+```text
+http://localhost:8080/ownermap.html
 ```
 
-Open `http://localhost:8080/ownermap.html`. Leave that window running while you sign in. Stop it later with Ctrl+C.
+Use `localhost` in both the browser and the app registration. `http://127.0.0.1:8080/ownermap.html` is a different URI. If you change the port, change the registered URI to the same port. Stop the server with Ctrl+C when you are done. Starting it again does not require a new app registration if the URL is unchanged.
 
-`http://` is valid only for `localhost`. A page you host for other people needs `https://`.
+> **Screenshot placeholder**
+>
+> Replace this box with a picture of your own PowerShell or Python window and the browser address bar.
+>
+> **Where to click:** the folder that contains `ownermap.html`, then the serve command above.
+>
+> **What the picture should show:** The command still running, and the browser address `http://localhost:8080/ownermap.html` with the OwnerMap sign-in page visible.
 
-| How you open it | Redirect URI to register |
-|---|---|
-| GitHub Pages | `https://yourusername.github.io/OwnerMap/ownermap.html` |
-| Local Python server | `http://localhost:8080/ownermap.html` |
+### 2. Azure Static Web Apps, Free plan
+
+Use this when several people should open the same link, including from home, and the company has an Azure subscription. The Free plan is enough for this page. It includes the `azurestaticapps.net` address, a certificate, and up to two custom domains. It does not include a service-level agreement. You do not connect GitHub or Azure DevOps.
+
+The page stays in the browser. Azure only stores the HTML and JavaScript files. Do not add an API, Azure Functions, or the Static Web Apps login feature. OwnerMap signs in with Microsoft from the browser. The deployment token only lets someone upload files. Treat it like a password.
+
+Someone who can create resources in the subscription does these steps. Contributor on the resource group is the usual role. That Azure role is separate from the Entra roles in the table above.
+
+1. Sign in to the [Azure portal](https://portal.azure.com).
+2. Select **Create a resource**, search for **Static Web App**, and select **Create**.
+3. Choose the subscription and a resource group. A new group named `ownermap` is fine.
+4. Name the app `ownermap`, or a name your company prefers. Pick the region closest to the office.
+5. Hosting plan: **Free**.
+6. Under **Deployment details**, set the source to **Other**. Do not sign in to GitHub. Create the app.
+7. Open the new Static Web App. On **Overview**, select **Manage deployment token** and copy the token into a local note. You need it once, for the upload. Do not email it, and do not paste it into a chat.
+
+> **Screenshot placeholder**
+>
+> Replace this box with a picture from your own Azure portal. Hide the deployment token if it is on screen.
+>
+> **Where to click:** Create Static Web App, then the new app's Overview page.
+>
+> **What the picture should show:** Hosting plan Free, deployment source Other, and the `https://....azurestaticapps.net` URL on Overview.
+
+**Upload the files.** The folder you upload must contain `ownermap.html` and the `src` folder. If the portal shows **Deployment** with a manual upload or a place to drop a folder, use that and choose this folder.
+
+If the portal has no upload box, use the Static Web Apps CLI. That is the upload method Microsoft documents when the source is Other.
+
+1. On the admin PC, install the Node.js LTS installer from [https://nodejs.org](https://nodejs.org), then close and reopen PowerShell. On a current Windows PC you can instead run `winget install OpenJS.NodeJS.LTS` and open a new window.
+2. Change to the unzipped OwnerMap folder.
+3. Run the upload. Replace the token. `--env production` matters. Without it, the files land on a preview address and the redirect URI will not match.
+
+```powershell
+npx --yes @azure/static-web-apps-cli deploy . --deployment-token PASTE-TOKEN-HERE --env production
+```
+
+4. When it finishes, go back to **Overview** and copy the URL, which looks like `https://happy-name-12345.azurestaticapps.net`.
+5. Open `https://happy-name-12345.azurestaticapps.net/ownermap.html`. The file name is required. The site root is not the page.
+
+The Single-page application redirect URI is that full address, for example:
+
+```text
+https://happy-name-12345.azurestaticapps.net/ownermap.html
+```
+
+**Custom domain, optional.** Use this when you want a name such as `ownermap.contoso.com`. The Free plan includes the certificate. The DNS record has to be visible on the public internet, because Azure uses it to prove you own the name and to renew the certificate. A name that exists only in internal DNS will not work here. Host that name on your internal web server instead.
+
+1. On the Static Web App, open **Custom domains** and add the hostname, for example `ownermap.contoso.com`.
+2. At the public DNS host, create the CNAME record the portal shows. It points your name at the `azurestaticapps.net` hostname.
+3. Wait until the portal says the domain is ready and the certificate is issued.
+4. Open `https://ownermap.contoso.com/ownermap.html`.
+5. Register that exact URL as well. If people will use both the Azure hostname and the custom domain, pass both to the script. Passing only the new one removes the old one.
+
+Details Microsoft maintains: [Custom domains with Azure Static Web Apps](https://learn.microsoft.com/en-us/azure/static-web-apps/custom-domain) and [Deploy with the Static Web Apps CLI](https://learn.microsoft.com/en-us/azure/static-web-apps/static-web-apps-cli-deploy).
+
+### 3. Internal web server
+
+Use this when the page should be reachable by the IT team on the company network, and you already run IIS, nginx, or Apache. The hostname in this section is an example. Use yours, and use the same name in DNS, on the certificate, and in the redirect URI.
+
+Example redirect URI:
+
+```text
+https://ownermap.contoso.local/ownermap.html
+```
+
+`http://ownermap.contoso.local/ownermap.html` will not work for sign-in. Microsoft rejects `http://` for every host except localhost.
+
+Copy `ownermap.html` and the `src` folder onto the server. Keep them side by side. The examples below use `C:\inetpub\ownermap` on Windows and `/var/www/ownermap` on Linux.
+
+Create an internal DNS record so `ownermap.contoso.local` points at this server. The certificate must be for that same name, and the PCs that open the page must trust the authority that issued it. A certificate from the company's internal CA is the right choice. A self-signed certificate works only after you distribute it to **Trusted Root Certification Authorities** on those PCs (Group Policy does this for domain-joined Windows computers). Until the browser trusts the certificate, the sign-in window can fail even after the person clicks through the warning.
+
+#### IIS on Windows Server
+
+1. Install the web server if this machine does not have it yet. In an elevated PowerShell window:
+
+```powershell
+Install-WindowsFeature Web-Server, Web-Static-Content
+```
+
+2. Create `C:\inetpub\ownermap` and copy in `ownermap.html` and the `src` folder.
+3. Save the following as `C:\inetpub\ownermap\web.config`. It sets the file types and makes `ownermap.html` the default document. IIS usually already knows `.js`. The remove-and-add lines keep the site from failing when the type is already defined.
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<configuration>
+  <system.webServer>
+    <defaultDocument>
+      <files>
+        <clear />
+        <add value="ownermap.html" />
+      </files>
+    </defaultDocument>
+    <staticContent>
+      <remove fileExtension=".js" />
+      <mimeMap fileExtension=".js" mimeType="text/javascript" />
+      <remove fileExtension=".json" />
+      <mimeMap fileExtension=".json" mimeType="application/json" />
+    </staticContent>
+  </system.webServer>
+</configuration>
+```
+
+4. Open **IIS Manager**. Select the server name, then **Server Certificates**.
+   - Internal CA: import the `.pfx` the CA gave you, or use **Create Domain Certificate** if this server is set up to request one.
+   - No CA yet: **Create Self-Signed Certificate**, friendly name `ownermap`. Then export it and trust it on the PCs, as described above.
+5. Right-click **Sites**, then **Add Website**.
+   - Site name: `OwnerMap`
+   - Physical path: `C:\inetpub\ownermap`
+   - Type: **https**
+   - Port: **443**
+   - Host name: `ownermap.contoso.local`
+   - SSL certificate: the certificate from the previous step
+6. Allow HTTPS from the staff network:
+
+```powershell
+New-NetFirewallRule -DisplayName 'OwnerMap HTTPS' -Direction Inbound -Protocol TCP -LocalPort 443 -Action Allow
+```
+
+7. On a staff PC, open `https://ownermap.contoso.local/ownermap.html`. The address bar must show a lock, with no certificate warning. Register that exact URL.
+
+> **Screenshot placeholder**
+>
+> Replace this box with a picture from your own IIS Manager.
+>
+> **Where to click:** Sites > OwnerMap > Bindings.
+>
+> **What the picture should show:** An https binding on port 443, the host name you will register, and the certificate selected. No token or password in the picture.
+
+To confirm the MIME types in the manager: select the OwnerMap site, open **MIME Types**, and check that `.js` is `text/javascript` and `.json` is `application/json`. The `web.config` above sets both.
+
+#### Linux with nginx
+
+1. Install nginx if it is not already the site's web server. On Ubuntu or Debian: `sudo apt install nginx`.
+2. Copy the files to `/var/www/ownermap/` so these paths exist: `/var/www/ownermap/ownermap.html` and `/var/www/ownermap/src/hygiene.js`. Let the web server read them: `sudo chmod -R a+rX /var/www/ownermap`.
+3. Put the certificate and private key on the server, for example `/etc/ssl/certs/ownermap.crt` and `/etc/ssl/private/ownermap.key`. Restrict the key: `sudo chmod 640 /etc/ssl/private/ownermap.key`.
+4. Create `/etc/nginx/sites-available/ownermap` with this site. Replace the hostname and certificate paths.
+
+```nginx
+server {
+    listen 443 ssl;
+    server_name ownermap.contoso.local;
+
+    ssl_certificate     /etc/ssl/certs/ownermap.crt;
+    ssl_certificate_key /etc/ssl/private/ownermap.key;
+
+    root /var/www/ownermap;
+    index ownermap.html;
+
+    include /etc/nginx/mime.types;
+
+    location / {
+        try_files $uri $uri/ =404;
+    }
+}
+```
+
+`mime.types` already serves `.html` as `text/html` and `.js` as JavaScript. The include line is what makes that apply to this site.
+
+5. Enable the site, test the config, and reload:
+
+```bash
+sudo ln -s /etc/nginx/sites-available/ownermap /etc/nginx/sites-enabled/ownermap
+sudo nginx -t
+sudo systemctl reload nginx
+```
+
+6. If a firewall is on, allow TCP 443. With ufw: `sudo ufw allow 443/tcp`.
+7. Open `https://ownermap.contoso.local/ownermap.html` from a staff PC and register that exact URL.
+
+#### Linux with Apache
+
+1. Install Apache if this is the server you use. On Ubuntu or Debian: `sudo apt install apache2` and `sudo a2enmod ssl`.
+2. Use the same folder and certificate files as the nginx steps.
+3. Create `/etc/apache2/sites-available/ownermap.conf`:
+
+```apache
+<VirtualHost *:443>
+    ServerName ownermap.contoso.local
+    DocumentRoot /var/www/ownermap
+
+    SSLEngine on
+    SSLCertificateFile /etc/ssl/certs/ownermap.crt
+    SSLCertificateKeyFile /etc/ssl/private/ownermap.key
+
+    DirectoryIndex ownermap.html
+    AddType text/javascript .js
+    AddType application/json .json
+
+    <Directory /var/www/ownermap>
+        Require all granted
+    </Directory>
+</VirtualHost>
+```
+
+4. Enable the site and reload:
+
+```bash
+sudo a2ensite ownermap.conf
+sudo apachectl configtest
+sudo systemctl reload apache2
+```
+
+5. Allow TCP 443 if a firewall is on, then open `https://ownermap.contoso.local/ownermap.html` and register that exact URL.
+
+Optional. If the company already uses GitHub Pages for an internal tool, that host can serve this page too. Register the `https` address of `ownermap.html` as a Single-page application redirect. A GitHub account is not required for the three options above.
 
 ## Recommended path: PowerShell
 
@@ -153,28 +380,28 @@ Preview without signing in:
 
 Create or update the app. PowerShell prints the plan, asks you to confirm, and then opens a sign-in window. The sign-in account must be allowed to register applications (see the role table). The confirmation is there because the script changes an app registration.
 
-Local page:
+Local page only:
 
 ```powershell
 .\scripts\Register-OwnerMap.ps1 -RedirectUri 'http://localhost:8080/ownermap.html'
 ```
 
-GitHub Pages:
+Azure or an internal server. Use the URL you actually open:
 
 ```powershell
-.\scripts\Register-OwnerMap.ps1 -RedirectUri 'https://yourusername.github.io/OwnerMap/ownermap.html'
+.\scripts\Register-OwnerMap.ps1 -RedirectUri 'https://ownermap.contoso.local/ownermap.html'
 ```
 
-Both addresses on one registration:
+Localhost and the shared name on one registration. Pass every address people will open. This command replaces the whole redirect list:
 
 ```powershell
-.\scripts\Register-OwnerMap.ps1 -RedirectUri 'http://localhost:8080/ownermap.html','https://yourusername.github.io/OwnerMap/ownermap.html'
+.\scripts\Register-OwnerMap.ps1 -RedirectUri 'http://localhost:8080/ownermap.html','https://ownermap.contoso.local/ownermap.html'
 ```
 
 Update a specific app instead of searching by name:
 
 ```powershell
-.\scripts\Register-OwnerMap.ps1 -ClientId 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee' -RedirectUri 'https://yourusername.github.io/OwnerMap/ownermap.html'
+.\scripts\Register-OwnerMap.ps1 -ClientId 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee' -RedirectUri 'https://ownermap.contoso.local/ownermap.html'
 ```
 
 Copy the **Client ID**, **Directory tenant ID**, and **Admin consent URL** from the output. The script then signs you out of Microsoft Graph PowerShell.
@@ -282,7 +509,7 @@ Use this when you cannot run the PowerShell script. The result should match what
 >
 > **What the picture should show:** The page URL under **Single-page application**. The **Web** section should not contain that same URL.
 
-To add a second URL later (localhost and GitHub Pages), open **Authentication** and add another **Single-page application** URI, or run the script again and pass both URLs.
+To add a second URL later, open **Authentication** and add another **Single-page application** URI, or run the script again and pass every URL you still want, such as localhost and the internal hostname.
 
 ## First run
 
@@ -301,7 +528,7 @@ The person who runs the check needs a reader role such as Global Reader. They do
 
 You can paste the prompt below into ChatGPT, Claude, or Grok, then paste this guide (or the part you are stuck on) underneath it. The assistant should walk one step at a time and explain errors. It is a helper for reading this document. It cannot click the portal for you, and it is not a setup service.
 
-**Never paste tokens or secrets into a chat.** That includes access tokens, refresh tokens, authorization codes, client secrets, passwords, and any sign-in URL that contains `code=`, `access_token`, or `id_token`. If a URL looks long and contains those words, delete the query string before you copy it. An error code such as `AADSTS50011` is safe to paste. A client ID and a tenant ID are safe to paste. A token is not.
+**Never paste tokens or secrets into a chat.** That includes access tokens, refresh tokens, authorization codes, client secrets, passwords, the Azure Static Web Apps deployment token, and any sign-in URL that contains `code=`, `access_token`, or `id_token`. If a URL looks long and contains those words, delete the query string before you copy it. An error code such as `AADSTS50011` is safe to paste. A client ID and a tenant ID are safe to paste. A token is not.
 
 ```text
 You are helping a junior IT person set up OwnerMap, a free read-only
@@ -315,20 +542,37 @@ plain language, including AADSTS codes, and name the troubleshooting row
 that matches.
 
 Use the PowerShell script (scripts/Register-OwnerMap.ps1) as the recommended
-path. Use the manual portal steps only if they cannot run the script.
+way to register the app. Use the manual portal steps only if they cannot
+run the script. The script accepts one or more -RedirectUri values, and
+-WhatIf prints the plan without signing in.
+
+Hosting is one of these three, and only these three, unless they already
+said they use another host:
+1. Local admin PC, http://localhost, using scripts/Serve-OwnerMap.ps1 or
+   a one-line Python server.
+2. Azure Static Web Apps on the Free plan, created in the Azure portal
+   with deployment source Other, then uploaded with the portal upload or
+   the SWA CLI. No GitHub account.
+3. An internal web server: IIS, or Linux with nginx or Apache, over HTTPS.
+
+http:// is valid only for localhost. Every other redirect URI is https.
+If they want localhost and a shared hostname, pass both URIs in one
+script command.
 
 Follow these rules:
 - Never ask them to paste an access token, refresh token, authorization
-  code, client secret, password, or a sign-in URL that contains a code or
-  token.
+  code, client secret, password, Azure deployment token, or a sign-in URL
+  that contains a code or token.
 - If they paste one of those, stop. Tell them to close the page, sign out,
-  and start the sign-in again. Do not repeat the secret back to them.
+  and start the sign-in again. For a deployment token, tell them to reset
+  it in the Azure portal. Do not repeat the secret back to them.
 - Do not tell them to add any Microsoft Graph permission with Write in the
   name.
 - Do not tell them to create a client secret, open Certificates & secrets,
   or switch any permission to an application permission.
 - The redirect platform is Single-page application, not Web.
-- Do not offer a paid setup service. This is a do-it-yourself guide.
+- Stick to the three hosting options in the guide. Do not offer a paid
+  setup service. This is a do-it-yourself guide.
 
 They are stuck at this point (they will fill this in):
 [step name, what they clicked or which command they ran, and the error text
@@ -353,10 +597,15 @@ with any token or secret removed]
 | The script says more than one app is named OwnerMap | An earlier registration used the same display name. | Copy the client ID you want from the error text and run the script again with `-ClientId`. |
 | The script says it is not allowed to create the application | The account cannot register apps, or it did not consent to `Application.ReadWrite.All` for the Graph PowerShell sign-in. | Use an account from the register row of the role table. Accept the Graph PowerShell consent for `Application.ReadWrite.All` for yourself. Do not add that permission to the OwnerMap app. |
 | A portal page offers to create a client secret | That secret is for a different kind of app. OwnerMap signs in as the current user. | Close that page. Do not create the secret. |
+| The address starts with `file://`, or the page is blank and the scripts did not load | The file was opened from Explorer or the desktop. Microsoft sign-in cannot use that address, and the `src` folder is not served. | Serve it with `scripts/Serve-OwnerMap.ps1` or Python, and open `http://localhost:8080/ownermap.html`. |
+| The browser warns about the certificate on the internal site | The PC does not trust the certificate, or the name on the certificate does not match the hostname. | Use a certificate from the company CA for the exact hostname, or distribute the self-signed certificate to Trusted Root Certification Authorities. Then reload before signing in. |
+| Sign-in fails and the address is `http://` on a server name, not localhost | Microsoft allows `http://` only for localhost. | Bind HTTPS, open the `https://` address, and register that URL. |
+| The Azure site opens a placeholder page, or `ownermap.html` is missing | The upload did not include the OwnerMap folder, or it went to a preview environment. | Upload the folder that contains `ownermap.html` and `src`, with `--env production`. Open the URL that ends in `/ownermap.html`. |
+| `npx` or `swa` is not recognized | Node.js is not installed, or the window was opened before the install. | Install the Node.js LTS build, open a new PowerShell window, and run the `npx` command again. |
 
 ## Checklist
 
-- The page opens from `https://.../ownermap.html` or from `http://localhost:.../ownermap.html`, not from a downloaded file.
+- The page opens from `http://localhost:8080/ownermap.html`, from an `https://....azurestaticapps.net/ownermap.html` address, or from `https://` on the internal server. It does not open from a downloaded file.
 - The app is single-tenant, and the redirect URI is on **Single-page application**.
 - API permissions are the eight delegated scopes, with admin consent granted.
 - No permission on OwnerMap contains `Write`. There is no client secret.

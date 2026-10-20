@@ -65,6 +65,41 @@ test('README lists every permission and drops the stale docs', () => {
   assert.doesNotMatch(readme, /switch them to Application/);
   assert.doesNotMatch(readme, /choose \*\*Web\*\*/);
   assert.doesNotMatch(readme, /Add a platform → Web/);
+  assert.doesNotMatch(readme, /GitHub Pages|github\.io/);
+  assert.match(readme, /Azure Static Web Apps/);
+  assert.match(readme, /Serve-OwnerMap\.ps1/);
+});
+
+test('hosting guide offers the three SMB options and keeps several redirect URIs', () => {
+  const root = path.join(__dirname, '..');
+  const setup = fs.readFileSync(path.join(root, 'docs', 'SETUP.md'), 'utf8');
+  const script = fs.readFileSync(path.join(root, 'scripts', 'Register-OwnerMap.ps1'), 'utf8');
+  const server = fs.readFileSync(path.join(root, 'scripts', 'Serve-OwnerMap.ps1'), 'utf8');
+  assert.equal((setup.match(/GitHub Pages/g) || []).length, 1);
+  assert.doesNotMatch(setup, /github\.io/);
+  assert.doesNotMatch(script, /github\.io|GitHub Pages/);
+  assert.match(setup, /Local admin PC/);
+  assert.match(setup, /Azure Static Web Apps/);
+  assert.match(setup, /Internal web server/);
+  assert.match(setup, /Serve-OwnerMap\.ps1/);
+  assert.match(setup, /py -m http\.server 8080/);
+  assert.match(setup, /http:\/\/localhost:8080\/ownermap\.html/);
+  assert.match(setup, /Deployment details/);
+  assert.match(setup, /deployment token/i);
+  assert.match(setup, /--env production/);
+  assert.match(setup, /Custom domains/);
+  assert.match(setup, /Install-WindowsFeature Web-Server/);
+  assert.match(setup, /mimeMap fileExtension="\.js"/);
+  assert.match(setup, /nginx/);
+  assert.match(setup, /Apache/);
+  assert.match(setup, /https:\/\/ownermap\.contoso\.local\/ownermap\.html/);
+  assert.match(setup, /Ask your AI assistant/);
+  assert.match(setup, /deployment token/i);
+  assert.match(script, /\[string\[\]\]\$RedirectUri/);
+  assert.match(script, /-WhatIf/);
+  assert.match(script, /http:\/\/localhost:8080\/ownermap\.html','https:\/\/ownermap\.contoso\.local\/ownermap\.html/);
+  assert.match(server, /http:\/\/localhost:/);
+  assert.doesNotMatch(server, /0\.0\.0\.0|\+:/);
 });
 
 test('setup guide and registration script stay on the read-only scope list', () => {

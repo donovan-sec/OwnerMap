@@ -23,11 +23,12 @@
     the script stops.
 
 .PARAMETER RedirectUri
-    One or more exact page URLs, for example
-    https://yourusername.github.io/OwnerMap/ownermap.html
-    or http://localhost:8080/ownermap.html.
+    One or more exact page URLs. Pass a single URL, or several, for example
+    the localhost page and an internal hostname:
+    http://localhost:8080/ownermap.html
+    and https://ownermap.contoso.local/ownermap.html.
     The script replaces the Single-page application redirect list with this set.
-    Pass every URL you want to keep.
+    Pass every URL you want to keep. http is accepted only for localhost.
 
 .PARAMETER ClientId
     Application (client) ID of an existing registration to update. If it does not
@@ -37,10 +38,10 @@
     .\scripts\Register-OwnerMap.ps1 -RedirectUri 'http://localhost:8080/ownermap.html' -WhatIf
 
 .EXAMPLE
-    .\scripts\Register-OwnerMap.ps1 -RedirectUri 'https://contoso.github.io/OwnerMap/ownermap.html'
+    .\scripts\Register-OwnerMap.ps1 -RedirectUri 'https://ownermap.contoso.local/ownermap.html'
 
 .EXAMPLE
-    .\scripts\Register-OwnerMap.ps1 -RedirectUri 'http://localhost:8080/ownermap.html','https://contoso.github.io/OwnerMap/ownermap.html'
+    .\scripts\Register-OwnerMap.ps1 -RedirectUri 'http://localhost:8080/ownermap.html','https://ownermap.contoso.local/ownermap.html'
 
 .NOTES
     Requires Windows PowerShell 5.1 or PowerShell 7, and the modules
