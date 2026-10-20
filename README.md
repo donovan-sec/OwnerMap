@@ -50,45 +50,34 @@ The signed-in person also needs a directory role that can read these objects. **
 
 ## Setup
 
-### 1. Register the app
+Your own IT staff register the app in your tenant. The step-by-step guide is [docs/SETUP.md](docs/SETUP.md), including who needs which Entra role, what to do when you cannot grant admin consent, and a copy-paste prompt for ChatGPT, Claude, or Grok. There is no paid setup service.
 
-In the [Entra admin center](https://entra.microsoft.com): **Identity → Applications → App registrations → New registration**.
+The recommended path is [scripts/Register-OwnerMap.ps1](scripts/Register-OwnerMap.ps1). It creates or updates one single-tenant registration, sets the **Single-page application** redirect URI, and adds exactly the eight delegated read permissions. It prints the client ID and an admin consent URL. It does not grant consent, and it does not create an application password. The sign-in that creates the registration uses `Application.ReadWrite.All` for the operator only. That permission is not added to OwnerMap.
 
-- **Name:** `OwnerMap`
-- **Supported account types:** Accounts in this organizational directory only
-- **Redirect URI:** choose **Web**, and paste the exact URL you will open. You can add it in the next step if you do not know it yet.
+Preview the plan without signing in:
 
-Open **API permissions → Add a permission → Microsoft Graph → Delegated permissions**, add the eight permissions in the table, then **Grant admin consent**.
+```powershell
+.\scripts\Register-OwnerMap.ps1 -RedirectUri 'http://localhost:8080/ownermap.html' -WhatIf
+```
 
-Copy **Application (client) ID** and **Directory (tenant) ID** from the app's Overview page.
+The portal clicks are the alternative in the guide. Use platform **Single-page application**, not Web. A Web redirect causes `AADSTS9002326`. Then **Grant admin consent**.
 
-You do not create an application password. Sign-in uses the current user only, and the token stays in memory until you disconnect or close the tab.
+Microsoft requires the redirect URI to match the address bar exactly, including `ownermap.html`.
 
-### 2. Serve the page
+**GitHub Pages** (a stable link for the IT team): fork this repo, **Settings → Pages**, branch `main`, folder `/ (root)`. Open `https://yourusername.github.io/OwnerMap/ownermap.html` and pass that URL to the script.
 
-Microsoft requires the redirect URI to match the address bar exactly, including `ownermap.html` and without a trailing slash difference.
-
-**GitHub Pages** (a stable link for the IT team):
-
-1. Fork this repo or push it to your own GitHub account.
-2. **Settings → Pages → Source:** the `main` branch, `/ (root)`, Save.
-3. Open `https://yourusername.github.io/OwnerMap/ownermap.html`.
-4. On the app registration, **Authentication → Add a platform → Web**, paste that URL, Save.
-
-**A local web server** (a one-off check on your machine):
+**A local web server** (a one-off check on your machine), from the folder that contains `ownermap.html`:
 
 ```bash
 python3 -m http.server 8080
 ```
 
-Open `http://localhost:8080/ownermap.html`. Register that URL as a Web redirect URI. Stop the server with Ctrl+C when you are done.
+Open `http://localhost:8080/ownermap.html`. On Windows, `py -m http.server 8080` works when `python3` is not on the path. Stop the server with Ctrl+C when you are done.
 
 | How you open it | Redirect URI |
 |---|---|
 | GitHub Pages | `https://yourusername.github.io/OwnerMap/ownermap.html` |
 | Local Python server | `http://localhost:8080/ownermap.html` |
-
-### 3. Run the check
 
 Open the URL you registered. Enter the tenant ID and client ID. Choose **Sign in and run the check**. If you are already signed in to Microsoft 365, the prompt may be brief. **Preview with sample data** shows a fictional tenant and does not contact Microsoft.
 

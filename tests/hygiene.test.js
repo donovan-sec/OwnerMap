@@ -55,10 +55,47 @@ test('README lists every permission and drops the stale docs', () => {
   });
   assert.match(readme, /Entra ID P1/);
   assert.match(readme, /read-only/i);
+  assert.match(readme, /docs\/SETUP\.md/);
+  assert.match(readme, /scripts\/Register-OwnerMap\.ps1/);
+  assert.match(readme, /Single-page application/);
+  assert.match(readme, /no paid setup service/i);
   assert.doesNotMatch(readme, /Total Members/);
   assert.doesNotMatch(readme, /client credentials/i);
   assert.doesNotMatch(readme, /Certificates & secrets/);
   assert.doesNotMatch(readme, /switch them to Application/);
+  assert.doesNotMatch(readme, /choose \*\*Web\*\*/);
+  assert.doesNotMatch(readme, /Add a platform → Web/);
+});
+
+test('setup guide and registration script stay on the read-only scope list', () => {
+  const root = path.join(__dirname, '..');
+  const setup = fs.readFileSync(path.join(root, 'docs', 'SETUP.md'), 'utf8');
+  const script = fs.readFileSync(path.join(root, 'scripts', 'Register-OwnerMap.ps1'), 'utf8');
+  const block = script.match(/# OWNERMAP_SCOPES_START\r?\n([\s\S]*?)# OWNERMAP_SCOPES_END/);
+  assert.ok(block, 'scope block missing from the registration script');
+  const listed = [...block[1].matchAll(/'([A-Za-z.]+)'/g)].map(match => match[1]);
+  assert.deepEqual(listed, h.PERMISSIONS.map(permission => permission.scope));
+  assert.doesNotMatch(block[1], /Write/);
+  h.PERMISSIONS.forEach(permission => {
+    assert.ok(setup.includes(permission.scope), permission.scope + ' missing from SETUP.md');
+  });
+  assert.match(setup, /Who needs which role/);
+  assert.match(setup, /Cloud Application Administrator/);
+  assert.match(setup, /Privileged Role Administrator/);
+  assert.match(setup, /Application Developer/);
+  assert.match(setup, /Ask your AI assistant/);
+  assert.match(setup, /Never paste tokens or secrets/i);
+  assert.match(setup, /ChatGPT, Claude, or Grok/);
+  assert.match(setup, /Screenshot placeholder/);
+  assert.match(setup, /Single-page application/);
+  assert.match(setup, /scripts\/Register-OwnerMap\.ps1/);
+  assert.match(setup, /no paid setup service/i);
+  assert.match(setup, /grant-admin-consent/);
+  assert.doesNotMatch(setup, /contact us to set this up|professional services engagement|we will register it for you/i);
+  assert.match(script, /Application\.ReadWrite\.All/);
+  assert.doesNotMatch(script, /New-MgOauth2PermissionGrant|New-MgServicePrincipalAppRoleAssignment/);
+  assert.match(script, /type\s*=\s*'Scope'/);
+  assert.doesNotMatch(script, /client_secret|clientSecret|PasswordCredential/);
 });
 
 test('classifyGroupType distinguishes security, M365, and distribution groups', () => {
@@ -609,6 +646,9 @@ test('page asks only for the catalog scopes', () => {
   assert.match(html, /OwnerMapHygiene\.SCOPES/);
   assert.doesNotMatch(html, /ReadWrite/);
   assert.doesNotMatch(html, /client_secret|clientSecret/);
+  assert.match(html, /Single-page application/);
+  assert.match(html, /AADSTS9002326/);
+  assert.match(html, /AADSTS65001/);
   assert.match(html, /cacheLocation:\s*'memory'/);
   assert.match(html, /graph\.microsoft\.com/);
   assert.match(html, /integrity="sha384-/);

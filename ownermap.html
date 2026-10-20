@@ -198,7 +198,7 @@
           <div class="field">
             <label for="d_clientId">Client ID</label>
             <input type="text" id="d_clientId" autocomplete="off" placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" spellcheck="false">
-            <div class="field-hint">From the app registration overview. Register this exact redirect URI: <strong id="redirectHint"></strong></div>
+            <div class="field-hint">From the app registration overview. Add this exact URL as a Single-page application redirect URI: <strong id="redirectHint"></strong></div>
           </div>
           <div id="errorBox" class="error-box" role="alert"></div>
           <button type="button" class="btn-primary" id="connectBtn">Sign in and run the check</button>
@@ -297,8 +297,30 @@ function isConsentError(error) {
 
 function authMessage(error) {
   const message = (error && (error.message || error.errorCode)) || String(error || 'Sign-in failed.');
+  const page = redirectUri();
+  if (/AADSTS9002326|AADSTS9002325/i.test(message)) {
+    return 'This redirect URI is registered on the Web platform, so Microsoft rejected the sign-in. In the Entra app registration, open Authentication, remove the URL from Web, and add it under Single-page application: ' + page + '. The setup guide is docs/SETUP.md.';
+  }
   if (/AADSTS50011|redirect_uri/i.test(message)) {
-    return 'The redirect URI for this page is not registered. In the Entra app registration, open Authentication and add this exact URL: ' + redirectUri();
+    return 'The redirect URI for this page is not registered as a Single-page application. In the Entra app registration, open Authentication and add this exact URL under Single-page application: ' + page + '.';
+  }
+  if (/AADSTS65001|AADSTS90094/i.test(message)) {
+    return 'An administrator still needs to grant tenant-wide admin consent for the eight read-only Microsoft Graph permissions. A Cloud Application Administrator can do that. See docs/SETUP.md.';
+  }
+  if (/AADSTS700016/i.test(message)) {
+    return 'Microsoft could not find this app in the tenant. Check the Tenant ID and Client ID on the app registration Overview page, and sign in with a work account from that tenant.';
+  }
+  if (/AADSTS50020/i.test(message)) {
+    return 'That account is not in this tenant. Sign in with a work account from the same organization as the Tenant ID. Personal Microsoft accounts are not used for this check.';
+  }
+  if (/AADSTS50105/i.test(message)) {
+    return 'This app requires a user to be assigned before sign-in. In Enterprise applications, assign your account, or turn off Assignment required while you run the check.';
+  }
+  if (/AADSTS70011/i.test(message)) {
+    return 'Microsoft rejected a requested permission. OwnerMap only uses the eight delegated read permissions listed on this page. Remove any other permission and grant admin consent again. See docs/SETUP.md.';
+  }
+  if (/popup_window_error|empty_window_error/i.test(message)) {
+    return 'The sign-in window was blocked. Allow pop-ups for this site and try again.';
   }
   return message;
 }
