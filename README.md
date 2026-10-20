@@ -62,7 +62,7 @@ Preview the plan without signing in:
 
 The portal clicks are the alternative in the guide. Use platform **Single-page application**, not Web. A Web redirect causes `AADSTS9002326`. Then **Grant admin consent**.
 
-Microsoft requires the redirect URI to match the address bar exactly, including `ownermap.html`. `http://` is allowed only for localhost. The guide has three hosts: this PC, Azure Static Web Apps on the Free plan (no GitHub account), or an internal IIS, nginx, or Apache site over HTTPS.
+Microsoft requires the redirect URI to match the address bar exactly, including `ownermap.html`. `http://` is allowed only for localhost. The guide has three hosts: this PC, Azure Static Web Apps on the Free plan, or an internal IIS, nginx, or Apache site over HTTPS.
 
 On a Windows admin PC, from the folder that contains `ownermap.html`:
 

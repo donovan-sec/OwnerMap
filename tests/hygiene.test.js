@@ -65,7 +65,7 @@ test('README lists every permission and drops the stale docs', () => {
   assert.doesNotMatch(readme, /switch them to Application/);
   assert.doesNotMatch(readme, /choose \*\*Web\*\*/);
   assert.doesNotMatch(readme, /Add a platform → Web/);
-  assert.doesNotMatch(readme, /GitHub Pages|github\.io/);
+  assert.doesNotMatch(readme, /github/i);
   assert.match(readme, /Azure Static Web Apps/);
   assert.match(readme, /Serve-OwnerMap\.ps1/);
 });
@@ -75,9 +75,11 @@ test('hosting guide offers the three SMB options and keeps several redirect URIs
   const setup = fs.readFileSync(path.join(root, 'docs', 'SETUP.md'), 'utf8');
   const script = fs.readFileSync(path.join(root, 'scripts', 'Register-OwnerMap.ps1'), 'utf8');
   const server = fs.readFileSync(path.join(root, 'scripts', 'Serve-OwnerMap.ps1'), 'utf8');
-  assert.equal((setup.match(/GitHub Pages/g) || []).length, 1);
-  assert.doesNotMatch(setup, /github\.io/);
-  assert.doesNotMatch(script, /github\.io|GitHub Pages/);
+  for (const rel of ['README.md', 'docs/SETUP.md', 'ownermap.html', 'scripts/Register-OwnerMap.ps1', 'scripts/Serve-OwnerMap.ps1']) {
+    const text = fs.readFileSync(path.join(root, rel), 'utf8');
+    assert.doesNotMatch(text, /github/i, rel);
+  }
+  assert.match(setup, /link you were given/);
   assert.match(setup, /Local admin PC/);
   assert.match(setup, /Azure Static Web Apps/);
   assert.match(setup, /Internal web server/);

@@ -56,7 +56,7 @@ You can register more than one address on the same app. A common pair is the loc
 | Choose this when | One admin runs the check on their own PC | The team wants one `https` link and the company can use Azure | The page should stay on the company network, and a Windows or Linux web server is already there |
 | Who can open it | Only that PC, while the command is running | Anyone with the link | People who can reach that server (office network or VPN) |
 | Address to register | `http://localhost:8080/ownermap.html` | `https://<name>.azurestaticapps.net/ownermap.html` | `https://ownermap.yourcompany.local/ownermap.html` |
-| Account you need | None beyond the Entra role in the table above | An Azure subscription. No GitHub account | An admin login on the web server |
+| Account you need | None beyond the Entra role in the table above | An Azure subscription | An admin login on the web server |
 | Certificate | None. Localhost is the exception to HTTPS | Azure creates one, including a custom domain on the Free plan | A certificate the staff PCs already trust |
 
 Replace `yourcompany.local` and `<name>` with the real names from your own setup.
@@ -70,7 +70,7 @@ You need two things side by side in one folder:
 - `ownermap.html`
 - a `src` folder with `hygiene.js` and `sample-tenant.js`
 
-If a Release is listed on the project site, download that zip. Otherwise open the project page and use **Download ZIP**. A GitHub account is not required for a public download. Unzip it. Do not open `ownermap.html` from the desktop. That uses `file://`.
+Download the OwnerMap zip from the link you were given. Unzip it so `ownermap.html` and the `src` folder stay side by side. Do not open `ownermap.html` from the desktop. That uses `file://`.
 
 **Windows, no extra install.** Open PowerShell in the unzipped folder (the folder that contains `ownermap.html` and `scripts`) and run:
 
@@ -110,7 +110,7 @@ Use `localhost` in both the browser and the app registration. `http://127.0.0.1:
 
 ### 2. Azure Static Web Apps, Free plan
 
-Use this when several people should open the same link, including from home, and the company has an Azure subscription. The Free plan is enough for this page. It includes the `azurestaticapps.net` address, a certificate, and up to two custom domains. It does not include a service-level agreement. You do not connect GitHub or Azure DevOps.
+Use this when several people should open the same link, including from home, and the company has an Azure subscription. The Free plan is enough for this page. It includes the `azurestaticapps.net` address, a certificate, and up to two custom domains. It does not include a service-level agreement. Leave the deployment source as Other. Do not connect a source repository.
 
 The page stays in the browser. Azure only stores the HTML and JavaScript files. Do not add an API, Azure Functions, or the Static Web Apps login feature. OwnerMap signs in with Microsoft from the browser. The deployment token only lets someone upload files. Treat it like a password.
 
@@ -121,7 +121,7 @@ Someone who can create resources in the subscription does these steps. Contribut
 3. Choose the subscription and a resource group. A new group named `ownermap` is fine.
 4. Name the app `ownermap`, or a name your company prefers. Pick the region closest to the office.
 5. Hosting plan: **Free**.
-6. Under **Deployment details**, set the source to **Other**. Do not sign in to GitHub. Create the app.
+6. Under **Deployment details**, set the source to **Other**. Do not connect a source repository. Create the app.
 7. Open the new Static Web App. On **Overview**, select **Manage deployment token** and copy the token into a local note. You need it once, for the upload. Do not email it, and do not paste it into a chat.
 
 > **Screenshot placeholder**
@@ -311,8 +311,6 @@ sudo systemctl reload apache2
 ```
 
 5. Allow TCP 443 if a firewall is on, then open `https://ownermap.contoso.local/ownermap.html` and register that exact URL.
-
-Optional. If the company already uses GitHub Pages for an internal tool, that host can serve this page too. Register the `https` address of `ownermap.html` as a Single-page application redirect. A GitHub account is not required for the three options above.
 
 ## Recommended path: PowerShell
 
@@ -552,7 +550,7 @@ said they use another host:
    a one-line Python server.
 2. Azure Static Web Apps on the Free plan, created in the Azure portal
    with deployment source Other, then uploaded with the portal upload or
-   the SWA CLI. No GitHub account.
+   the SWA CLI.
 3. An internal web server: IIS, or Linux with nginx or Apache, over HTTPS.
 
 http:// is valid only for localhost. Every other redirect URI is https.
