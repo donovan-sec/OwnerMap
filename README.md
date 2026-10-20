@@ -1,200 +1,145 @@
 # OwnerMap
 
-**Map group ownership across Microsoft Entra ID — no install required.**
+**A free, read-only Microsoft 365 and Entra hygiene check for small businesses.**
 
-OwnerMap is a single-file browser tool that enumerates all your Entra ID (Azure AD) groups, resolves their owners and members via Microsoft Graph, and surfaces every group with no assigned owner — the #1 compliance gap during SOX, ISO 27001, and NIST 800-53 audits.
+OwnerMap is the first tool in a planned Microsoft 365 admin suite. It is a static page: open it, sign in with Microsoft, and get a plain-language report. There is no server, no database, and no write access to the tenant. It is meant for IT generalists who do not have a security team.
 
-Open the HTML file. Connect. Get answers.
+The page maps group owners and members, then adds the checks a small tenant usually needs before an auditor, an insurer, or a leaver asks an awkward question.
 
-![OwnerMap](docs/ownermap-icon.png)
-![OwnerMap Dashboard](docs/ownermap-screenshot.png)
+![OwnerMap sign-in](docs/screenshots/01-sign-in.png)
+![OwnerMap summary](docs/screenshots/02-summary.png)
 
-## Why This Exists
+## What it checks
 
-When your helpdesk implements an access request process, they need to know *who approves* each entitlement. In most environments, AD/Entra group ownership is never assigned systematically — it's the forgotten first step. OwnerMap gives you a complete picture in minutes so you can assign owners before your auditor asks.
+| Check | What you get |
+|---|---|
+| Groups and owners | Every group, who owns it, who is in it, and a high finding when nobody owns it. Also counts enabled users who are not in any group. |
+| Stale accounts | Enabled employees with no sign-in in 90 days. Uses `signInActivity`. Needs Entra ID P1 and `AuditLog.Read.All`. Skipped with a clear message when that is unavailable. |
+| Disabled accounts | Blocked users who are still in a group, still own a group, or still hold a license. |
+| Guest accounts | Every guest, with stale guests (no sign-in in 90 days, or invited 90+ days ago and never signed in) called out. |
+| Apps and service principals | Your app registrations and enterprise apps: no owner, expired or soon-to-expire secrets and certificates (30 days), and high-privilege Microsoft Graph application permissions. Built-in Microsoft apps are left out of the owner noise. |
+| Licenses | Purchased versus assigned seats, plus licenses sitting on disabled or stale people. Huge free catalogs such as Power BI Free are not treated as wasted seats. |
+| Conditional Access | No turned-on policy requires MFA, legacy authentication is not blocked, policies left on report-only, and broad exclusions. Uses `Policy.Read.All`. Skipped with a clear message when the tenant has no Entra ID P1. If security defaults are on, the message says so. |
 
-## Features
+Each check explains what the result means and lists steps a non-security IT person can follow in the Microsoft 365 and Entra admin centers.
 
-- **Zero install** — single `.html` file, runs in any modern browser
-- **OS agnostic** — works on macOS, Windows, Linux
-- **Two auth modes** — sign in as the current user (delegated) or use an app registration (client credentials)
-- **Full enumeration** — paginates through tenants with thousands of groups, fetches owners and members concurrently with automatic throttle/retry handling
-- **SOX risk flagging** — groups with no owner are immediately marked `HIGH` risk with red callouts
-- **Owner coverage stat** — see your percentage of groups with assigned owners at a glance
-- **Interactive UI** — filter by No Owner / Security / M365 / On-Prem, search by name/description/owner, sort any column, expand rows to see full member lists
-- **CSV export** — full dump of all groups, owners, and members for offline review or ticket generation
+The summary counts high, medium, and low findings. **Print one-page summary** uses the browser print dialog (choose Save as PDF). **Export CSV** on each check downloads that table. **Export all findings** downloads every finding. CSV cells that start with `=`, `+`, `-`, `@`, or a tab are prefixed so Excel does not treat them as formulas.
 
-## Step 1 — Register an App in Entra ID
+## Permissions
 
-This is a one-time setup. OwnerMap uses Microsoft Graph and requires an app registration so Microsoft knows what application is making the request.
+Create one app registration and add these **delegated** Microsoft Graph permissions. Then click **Grant admin consent**. Do not add application permissions for OwnerMap, and do not add any permission whose name contains `Write`.
 
-Go to **Entra ID → App registrations → New registration**
+| Permission | Required | License | Why |
+|---|---|---|---|
+| `User.Read` | Yes | Any | Sign in and confirm the account running the check |
+| `Group.Read.All` | Yes | Any | Read groups and their owners |
+| `GroupMember.Read.All` | Yes | Any | Read group members |
+| `User.Read.All` | Yes | Any | Read users, guests, enabled state, and assigned licenses |
+| `Directory.Read.All` | Yes | Any | Read directory objects, on-prem sync flags, and subscribed licenses |
+| `Application.Read.All` | Yes | Any | Read app registrations, enterprise apps, owners, and credentials |
+| `AuditLog.Read.All` | No | Entra ID P1 or P2 | Read `signInActivity` for stale accounts and stale guests |
+| `Policy.Read.All` | No | Entra ID P1 or P2 | Read Conditional Access policies and security defaults |
 
-- **Name:** `OwnerMap` (or anything descriptive)
-- **Supported account types:** Single tenant
-- **Redirect URI:** Leave blank for now — you will add this after choosing how to serve the file (see Step 2)
+The signed-in person also needs a directory role that can read these objects. **Global Reader** is enough. OwnerMap cannot change users, groups, policies, or licenses.
 
-### Required API Permissions
+### License requirements
 
-Go to **API permissions → Add a permission → Microsoft Graph** and add the following:
+- Groups, disabled accounts, guests (the list), apps, and license counts work on any Microsoft 365 tenant, including Business Basic.
+- **Stale accounts and stale guests** need at least one **Entra ID P1** (or P2) license in the tenant, plus `AuditLog.Read.All`. Without that, Microsoft hides sign-in dates. The rest of the report still runs.
+- **Conditional Access** needs **Entra ID P1** (or P2) and `Policy.Read.All`. Without P1 the check says so. If security defaults are turned on, the message explains what that does and what it does not do.
 
-| Permission | Type | Purpose |
-|---|---|---|
-| `Group.Read.All` | Delegated | Read all groups |
-| `GroupMember.Read.All` | Delegated | Read group members |
-| `User.Read.All` | Delegated | Resolve user display names and UPNs |
-| `Directory.Read.All` | Delegated | Read on-prem sync attributes |
+## Setup
 
-Click **Grant admin consent** after adding all four.
+### 1. Register the app
 
-## Step 2 — Choose How to Serve OwnerMap
+In the [Entra admin center](https://entra.microsoft.com): **Identity → Applications → App registrations → New registration**.
 
-OwnerMap uses Microsoft's MSAL.js library to handle sign-in. MSAL requires a **redirect URI** — the exact URL where the app is served — to be registered in your Entra app registration. This is a security requirement by Microsoft, not OwnerMap.
+- **Name:** `OwnerMap`
+- **Supported account types:** Accounts in this organizational directory only
+- **Redirect URI:** choose **Web**, and paste the exact URL you will open. You can add it in the next step if you do not know it yet.
 
-> **The redirect URI must exactly match the URL you use to open the file.** Even a trailing slash difference will cause a sign-in error.
+Open **API permissions → Add a permission → Microsoft Graph → Delegated permissions**, add the eight permissions in the table, then **Grant admin consent**.
 
-Choose the serving method that fits your situation:
+Copy **Application (client) ID** and **Directory (tenant) ID** from the app's Overview page.
 
-### Option A — GitHub Pages (Recommended for Internal Teams)
+You do not create an application password. Sign-in uses the current user only, and the token stays in memory until you disconnect or close the tab.
 
-Best for sharing with your IT team, helpdesk staff, or external auditors. Free, stable URL, no server to maintain.
+### 2. Serve the page
 
-**Steps:**
-1. Fork this repo or push it to your own GitHub account
-2. Go to **Settings → Pages → Source:** `main` branch, `/ (root)` folder, click Save
-3. GitHub will give you a URL like:
-   ```
-   https://yourusername.github.io/OwnerMap/ownermap.html
-   ```
-4. Go to your app registration → **Authentication → Add a platform → Web**
-5. Paste that GitHub Pages URL as the Redirect URI and click Save
-6. Anyone can now open that URL, sign in, and run the tool
+Microsoft requires the redirect URI to match the address bar exactly, including `ownermap.html` and without a trailing slash difference.
 
-### Option B — Local Python Web Server (Technical Users / One-Off Audits)
+**GitHub Pages** (a stable link for the IT team):
 
-Best for running a quick audit on your own machine without uploading the file anywhere.
+1. Fork this repo or push it to your own GitHub account.
+2. **Settings → Pages → Source:** the `main` branch, `/ (root)`, Save.
+3. Open `https://yourusername.github.io/OwnerMap/ownermap.html`.
+4. On the app registration, **Authentication → Add a platform → Web**, paste that URL, Save.
 
-**Steps:**
-1. Download `ownermap.html` to a local folder
-2. Open a terminal in that folder and run:
+**A local web server** (a one-off check on your machine):
 
-   **macOS / Linux:**
-   ```bash
-   python3 -m http.server 8080
-   ```
+```bash
+python3 -m http.server 8080
+```
 
-   **Windows:**
-   ```powershell
-   python -m http.server 8080
-   ```
+Open `http://localhost:8080/ownermap.html`. Register that URL as a Web redirect URI. Stop the server with Ctrl+C when you are done.
 
-3. Open `http://localhost:8080/ownermap.html` in your browser
-4. Go to your app registration → **Authentication → Add a platform → Web**
-5. Add `http://localhost:8080/ownermap.html` as the Redirect URI and click Save
-
-> **Note:** The server must be running every time you use the tool. Stop it with `Ctrl+C` when done.
-
-### Redirect URI Quick Reference
-
-| Serving Method | Redirect URI to Register |
+| How you open it | Redirect URI |
 |---|---|
 | GitHub Pages | `https://yourusername.github.io/OwnerMap/ownermap.html` |
 | Local Python server | `http://localhost:8080/ownermap.html` |
 
-You can register multiple redirect URIs in the same app registration if you use more than one method.
+### 3. Run the check
 
-## Step 3 — Open the Tool
+Open the URL you registered. Enter the tenant ID and client ID. Choose **Sign in and run the check**. If you are already signed in to Microsoft 365, the prompt may be brief. **Preview with sample data** shows a fictional tenant and does not contact Microsoft.
 
-Open OwnerMap using whichever URL matches the redirect URI you registered. Enter your **Tenant ID** and **Client ID** from the app registration, select **Current User**, and click **Sign In with Microsoft**.
+## How to read the report
 
-Your Tenant ID and Client ID are found in **Entra ID → App registrations → OwnerMap → Overview**.
+- **Summary** — high, medium, and low counts, one card per check, and the first items to open.
+- **Each check** — what it means, how to fix it in the admin center, the findings, and a searchable table.
+- **Groups** — click a row for owners and members. **Export unassigned users** downloads enabled employees who are not direct members of any group.
+- **Print one-page summary** — the browser print dialog. Choose Save as PDF for a one-page handout.
+- **Export CSV** — that check's table. **Export all findings** — every finding and its fix steps.
 
-## Auth Modes
+A check that says **Not checked** did not fail open. Sign-in dates or Conditional Access were skipped because of licensing or consent. The message on that tab says which one.
 
-### Current User (Recommended)
+## Security posture
 
-Uses MSAL.js popup sign-in. The signed-in user's own permissions apply — no secrets required. If the user is already signed into Microsoft 365 in their browser, authentication happens silently with no popup at all.
+- Static files only. No backend, and suitable for GitHub Pages.
+- Delegated Microsoft Graph only. The signed-in user's own rights apply.
+- No write permissions are requested, and the page never sends a change to Graph.
+- Tokens are stored with MSAL `cacheLocation: 'memory'`. Disconnecting drops them.
+- Content-Security-Policy allows scripts from this site and the pinned MSAL file on jsDelivr, styles from this page and Google Fonts, and connections only to `login.microsoftonline.com` and `graph.microsoft.com`. Frames are limited to the Microsoft login host. `object-src`, `base-uri`, and `form-action` are `none`. `frame-ancestors` is `none`.
+- The MSAL script tag uses subresource integrity.
+- Tenant ID and client ID are checked as GUIDs before sign-in.
+- Graph calls are refused unless the URL starts with `https://graph.microsoft.com/`.
+- Text from the directory is escaped before it is shown.
+- CSV formula injection is neutralized.
+- The URL hash is cleared if a token lands in it.
 
-**Requirements:**
-- App registration with Delegated permissions (see Step 1)
-- Redirect URI registered for the URL you are serving from (see Step 2)
-- User must have Global Reader role or equivalent directory read access
+## Tests
 
-### App Registration (Unattended / Service Account)
+The classification, severity, and CSV rules live in `src/hygiene.js` with no network and no browser. Tests feed mocked Graph responses, including the sample tenant.
 
-Uses a client ID and client secret directly. No interactive sign-in. Best for scheduled audits or environments where you cannot use delegated auth.
+```bash
+node --test tests/hygiene.test.js
+```
 
-**Requirements:**
-- App registration with **Application** permissions (not Delegated) and admin consent
-- A client secret generated under **Certificates & secrets**
+Node.js 22 or newer is enough. There is no package to install.
 
-> **Security note:** Never commit client secrets to a repository. The secret lives in browser session memory — use this mode on secured, trusted workstations only.
+## What this page does not do
 
-## Output
-
-### Dashboard Stats
-| Stat | Description |
-|---|---|
-| Total Groups | All groups enumerated from Entra ID |
-| Missing Owner | Groups with zero owners assigned — your SOX gap list |
-| Security Groups | Entitlement-bearing groups (highest audit priority) |
-| Total Members | Sum of all memberships across all groups |
-| Owner Coverage % | Percentage of groups with at least one assigned owner |
-
-### Group Details (expand any row)
-- Owner list with display name and UPN
-- Full member list with type icons (user / group / service principal)
-- SOX risk rating per group
-
-### CSV Export
-Columns: `Group Name, Description, Type, Source, Owner Count, Owners (UPN), Member Count, Members (Display Name + UPN), SOX Risk`
-
-## Group Types
-
-| Badge | Meaning |
-|---|---|
-| `Security` | Security group — controls access to resources |
-| `M365` | Microsoft 365 unified group (Teams, SharePoint, etc.) |
-| `Dist` | Distribution list |
-| `On-Prem` | Synced from on-premises Active Directory via Entra Connect |
-| `Cloud` | Cloud-only group |
-
-## On-Premises AD Coverage
-
-OwnerMap queries **Microsoft Graph**, not your on-premises Active Directory directly.
-
-| Scenario | Coverage |
-|---|---|
-| Cloud-only Entra ID | ✅ Full coverage |
-| Hybrid — on-prem AD synced via Entra Connect | ✅ Synced groups appear in results, flagged with the `On-Prem` badge |
-| On-prem AD groups **not** synced to Entra | ❌ Not visible — Graph has no record of them |
-| Pure on-prem AD, no Entra ID | ❌ Not supported in this version |
-
-If your environment has unsynced or pure on-prem groups, cross-reference the OwnerMap export against a `Get-ADGroup -Filter *` dump from a domain controller. A local PowerShell relay to bridge that gap is on the roadmap.
-
-> **Auditor note:** The `onPremisesSyncEnabled` flag on each group tells you whether it originated on-prem. If this field is populated, the group is mastered in your on-prem AD and Entra Connect is keeping it in sync.
-
-## Compliance Use Cases
-
-- **SOX IT General Controls** — identify who approves access to financially significant systems
-- **Access Review Prep** — enumerate all entitlements before a quarterly UAR
-- **Joiner/Mover/Leaver** — find groups with no owner to prevent orphaned memberships
-- **Zero Trust Readiness** — baseline all group memberships before implementing PIM/JIT access
+- It does not change the tenant, assign owners, remove licenses, or edit Conditional Access.
+- It does not read on-premises Active Directory directly. Groups synced by Entra Connect appear and are marked On-prem. Groups that were never synced do not appear.
+- It does not replace a full audit. It is a hygiene pass you can run in an afternoon.
 
 ## Roadmap
 
-- [ ] Owner write-back — assign owners directly from the UI (PATCH to Graph)
-- [ ] Stale member detection — flag users with no sign-in in 90+ days
-- [ ] App Registration & Service Principal audit tab
-- [ ] On-prem AD support via local PowerShell relay
-- [ ] Scheduled export / email digest mode
-- [ ] SCIM / CSV import for bulk owner assignment
+Later tools in this suite stay read-only unless a future version is a separate, explicit admin action. Ideas already queued:
 
-## Contributing
-
-PRs welcome. Please open an issue first for anything beyond bug fixes.
+- A quarterly reminder that reuses this report
+- On-premises groups that Entra Connect does not sync
+- A second page for SharePoint sharing links
 
 ## License
 
-MIT — free to use, modify, and distribute. Attribution appreciated.
-
+MIT. See [LICENSE](LICENSE).
