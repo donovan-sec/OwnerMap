@@ -1638,7 +1638,9 @@
     if (broad.length) {
       parts.push('Assigned user consent includes ' + broad.map(id => BROAD_USER_CONSENT[id]).join('; ') + ' (https://learn.microsoft.com/en-us/entra/identity/enterprise-apps/manage-app-consent-policies).');
     }
-    parts.push('https://learn.microsoft.com/en-us/entra/identity/enterprise-apps/configure-user-consent recommends allowing user consent only for applications published by verified publishers. Do not allow user consent is a separate option on that page, not the only supported choice. An empty user-consent list means user consent is off. Policies that only cover apps the user owns are not this finding.');
+    parts.push('https://learn.microsoft.com/en-us/entra/identity/enterprise-apps/configure-user-consent states: "we recommend that you allow user consent only for applications that have been published by a verified publisher".');
+    parts.push('https://learn.microsoft.com/en-us/entra/identity/role-based-access-control/delegate-app-roles says to select the Do not allow user consent option, which disables the default ability for users to consent to applications.');
+    parts.push('An empty user-consent list means user consent is off. Policies that only cover apps the user owns are not this finding.');
     parts.push('OwnerMap rates this high because a legacy or broad user-consent policy lets a member grant application permissions without an administrator.');
     return parts.join(' ');
   }
@@ -1690,8 +1692,8 @@
     ];
     const consentSteps = [
       'Open the Microsoft Entra admin center → Identity → Applications → Enterprise apps → Consent and permissions → User consent settings.',
-      'Allow user consent only for applications published by a verified publisher, for selected permissions: https://learn.microsoft.com/en-us/entra/identity/enterprise-apps/configure-user-consent',
-      'Do not allow user consent is a separate option on that page. The portal option Allow user consent for apps is the legacy policy. It applies to any application, for permissions that do not require an admin.',
+      'https://learn.microsoft.com/en-us/entra/identity/enterprise-apps/configure-user-consent states: "we recommend that you allow user consent only for applications that have been published by a verified publisher".',
+      'https://learn.microsoft.com/en-us/entra/identity/role-based-access-control/delegate-app-roles says to select the Do not allow user consent option. That option disables the default ability for users to consent to applications. On the configure-user-consent page, Allow user consent for apps is the legacy policy, and it applies to any application for permissions that do not require an admin.',
       'Broad built-in policies are listed at https://learn.microsoft.com/en-us/entra/identity/enterprise-apps/manage-app-consent-policies. If you change the list with Microsoft Graph, keep entries that start with managePermissionGrantsForOwnedResource. An empty user-consent list means user consent is off.'
     ];
     const sections = [
@@ -1757,7 +1759,7 @@
           title: 'Users can register applications',
           subject,
           subjectId,
-          detail: 'By default, all users can register applications, and this can be restricted by setting Users can register applications to No and assigning the Application Developer role only to people who need it (https://learn.microsoft.com/en-us/entra/identity/role-based-access-control/delegate-app-roles and https://learn.microsoft.com/en-us/entra/fundamentals/users-default-permissions). Any member who registers an application becomes its owner, which includes adding a password to that app. OwnerMap rates this medium because any member can register an application.',
+          detail: 'By default, all users can register applications and manage all aspects of applications they create. This can be restricted to selected people by setting Users can register applications to No and assigning the Application Developer role only to people who need it (https://learn.microsoft.com/en-us/entra/identity/role-based-access-control/delegate-app-roles and https://learn.microsoft.com/en-us/entra/fundamentals/users-default-permissions). Any member who registers an application becomes its owner, which includes adding a password to that app. OwnerMap rates this medium because any member can register an application.',
           steps: appSteps
         }));
         rows.push(tenantRow('Users can register applications', 'Any member', 'medium'));
@@ -1899,7 +1901,7 @@
       ? plural(findings.length, 'risky default')
       : (skipped.length || consentNote
         ? 'No risky default in the settings Microsoft returned'
-        : 'Tenant defaults are tightened');
+        : 'No flagged tenant defaults');
 
     return checkResult({
       id: 'tenantDefaults',
