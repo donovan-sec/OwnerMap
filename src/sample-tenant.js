@@ -293,7 +293,8 @@
             allowedToCreateSecurityGroups: true,
             allowedToReadOtherUsers: true,
             permissionGrantPoliciesAssigned: [
-              'ManagePermissionGrantsForSelf.microsoft-user-default-legacy'
+              'ManagePermissionGrantsForSelf.microsoft-user-default-legacy',
+              'ManagePermissionGrantsForSelf.microsoft-user-default-low'
             ]
           }
         }

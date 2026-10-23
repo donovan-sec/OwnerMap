@@ -27,7 +27,7 @@
     { scope: 'Directory.Read.All', type: 'Delegated', required: true, license: 'Any', purpose: 'Read directory objects, on-prem sync flags, and subscribed licenses' },
     { scope: 'Application.Read.All', type: 'Delegated', required: true, license: 'Any', purpose: 'Read app registrations, enterprise apps, owners, and credentials' },
     { scope: 'AuditLog.Read.All', type: 'Delegated', required: false, license: 'Entra ID P1 or P2', purpose: 'Read signInActivity for stale accounts and stale guests' },
-    { scope: 'Policy.Read.All', type: 'Delegated', required: false, license: 'Entra ID P1 or P2', purpose: 'Read Conditional Access policies, security defaults, and tenant default settings' }
+    { scope: 'Policy.Read.All', type: 'Delegated', required: false, license: 'Entra ID P1 or P2', purpose: 'Read Conditional Access policies and security defaults' }
   ];
 
   const GRAPH_SCOPE = 'https://graph.microsoft.com/';
@@ -1571,6 +1571,18 @@
     return !!obj && Object.prototype.hasOwnProperty.call(obj, key) && obj[key] !== null && obj[key] !== undefined;
   }
 
+  /** v1.0 returns one authorizationPolicy object. Arrays, scalars, and collection envelopes are not that object. */
+  function isPlainPolicyObject(policy) {
+    if (!policy || typeof policy !== 'object' || Array.isArray(policy)) return false;
+    if (hasProperty(policy, 'value') && Array.isArray(policy.value)) return false;
+    return true;
+  }
+
+  /**
+   * Learn writes the assignment prefix as managePermissionGrantsForSelf and
+   * ManagePermissionGrantsForSelf, and documents the policy ids in lowercase.
+   * Match an anchored prefix, then compare the id exactly, ignoring case.
+   */
   function consentSelfId(entry) {
     const match = String(entry || '').trim().match(/^managepermissiongrantsforself\.(.+)$/i);
     return match ? match[1].toLowerCase() : '';
@@ -1588,10 +1600,7 @@
     let owned = 0;
     let unrecognized = 0;
     list.forEach(entry => {
-      if (typeof entry !== 'string' || !entry.trim()) {
-        if (entry !== undefined && entry !== null && String(entry).trim() !== '') unrecognized += 1;
-        return;
-      }
+      if (typeof entry !== 'string' || !entry.trim()) return;
       const selfId = consentSelfId(entry);
       if (selfId) {
         if (SAFE_USER_CONSENT[selfId]) safe.push(selfId);
@@ -1618,6 +1627,20 @@
     if (BROAD_USER_CONSENT[id]) return BROAD_USER_CONSENT[id];
     if (SAFE_USER_CONSENT[id]) return SAFE_USER_CONSENT[id];
     return id;
+  }
+
+  function consentDetail(riskyIds) {
+    const parts = [];
+    if (riskyIds.includes(LEGACY_USER_CONSENT)) {
+      parts.push('The legacy policy microsoft-user-default-legacy allows all users to consent to any permission that does not require admin consent, for any application (https://learn.microsoft.com/en-us/entra/identity/enterprise-apps/configure-user-consent).');
+    }
+    const broad = riskyIds.filter(id => BROAD_USER_CONSENT[id]);
+    if (broad.length) {
+      parts.push('Assigned user consent includes ' + broad.map(id => BROAD_USER_CONSENT[id]).join('; ') + ' (https://learn.microsoft.com/en-us/entra/identity/enterprise-apps/manage-app-consent-policies).');
+    }
+    parts.push('https://learn.microsoft.com/en-us/entra/identity/enterprise-apps/configure-user-consent recommends allowing user consent only for applications published by verified publishers. Do not allow user consent is a separate option on that page, not the only supported choice. An empty user-consent list means user consent is off. Policies that only cover apps the user owns are not this finding.');
+    parts.push('OwnerMap rates this high because a legacy or broad user-consent policy lets a member grant application permissions without an administrator.');
+    return parts.join(' ');
   }
 
   function uniqueIds(ids) {
@@ -1647,29 +1670,29 @@
     const source = snapshot.authorizationPolicy || { available: false, reason: 'error' };
     const appSteps = [
       'Open the Microsoft Entra admin center → Identity → Users → User settings.',
-      'Set Users can register applications to No.',
-      'Give the Application Developer role only to people who should register apps.'
+      'Set Users can register applications to No. By default all users can register applications, and this setting restricts it: https://learn.microsoft.com/en-us/entra/identity/role-based-access-control/delegate-app-roles',
+      'Assign the Application Developer role only to people who should register apps: https://learn.microsoft.com/en-us/entra/fundamentals/users-default-permissions'
     ];
     const tenantSteps = [
       'Open the Microsoft Entra admin center → Identity → Users → User settings.',
-      'Set Restrict non-admin users from creating tenants to Yes.',
-      'Give the Tenant Creator role only to people who should create tenants. The person who creates a tenant becomes its Global Administrator.'
+      'Set Restrict non-admin users from creating tenants to Yes: https://learn.microsoft.com/en-us/entra/fundamentals/users-default-permissions',
+      'Give the Tenant Creator role only to people who should create tenants. The person who creates a tenant becomes its Global Administrator: https://learn.microsoft.com/en-us/entra/fundamentals/zero-trust-protect-tenants'
     ];
     const inviteSteps = [
       'Open the Microsoft Entra admin center → Identity → External Identities → External collaboration settings.',
-      'Under Guest invite settings, choose Only users assigned to specific admin roles can invite guest users.',
-      'That leaves invites to Global Administrator, User Administrator, and Guest Inviter.'
+      'Under Guest invite settings, set Guests can invite to No. Learn states that allowing guests to invite other guests means those invites can occur outside of entitlement management: https://learn.microsoft.com/en-us/entra/id-governance/entitlement-management-external-users',
+      'Member users and users assigned to specific admin roles can still invite. That setting is not this finding: https://learn.microsoft.com/en-us/entra/external-id/external-collaboration-settings-configure'
     ];
     const guestRoleSteps = [
       'Open the Microsoft Entra admin center → Identity → External Identities → External collaboration settings.',
-      'Under Guest user access, choose Guest user access is restricted to properties and memberships of their own directory objects.',
-      'A guest who was given an admin role keeps that role. This setting changes the default guest permissions.'
+      'Under Guest user access, choose the limited default or the option that restricts guests to properties and memberships of their own directory objects: https://learn.microsoft.com/en-us/entra/identity/users/users-restrict-guest-permissions',
+      'Same as member users is the most inclusive option. A guest who was given an admin role keeps that role: https://learn.microsoft.com/en-us/entra/external-id/external-collaboration-settings-configure'
     ];
     const consentSteps = [
       'Open the Microsoft Entra admin center → Identity → Applications → Enterprise apps → Consent and permissions → User consent settings.',
-      'Choose Do not allow user consent, or Allow user consent for apps from verified publishers, for selected permissions.',
-      'The portal option Allow user consent for apps is the legacy policy. It applies to any application, for permissions that do not require an admin.',
-      'If you change the list with Microsoft Graph, keep entries that start with managePermissionGrantsForOwnedResource. Those let an owner manage consent for their own app. An empty user-consent list means user consent is off.'
+      'Allow user consent only for applications published by a verified publisher, for selected permissions: https://learn.microsoft.com/en-us/entra/identity/enterprise-apps/configure-user-consent',
+      'Do not allow user consent is a separate option on that page. The portal option Allow user consent for apps is the legacy policy. It applies to any application, for permissions that do not require an admin.',
+      'Broad built-in policies are listed at https://learn.microsoft.com/en-us/entra/identity/enterprise-apps/manage-app-consent-policies. If you change the list with Microsoft Graph, keep entries that start with managePermissionGrantsForOwnedResource. An empty user-consent list means user consent is off.'
     ];
     const sections = [
       { title: 'Who can register applications', steps: appSteps },
@@ -1678,10 +1701,10 @@
       { title: 'What guests can see', steps: guestRoleSteps },
       { title: 'User consent to apps', steps: consentSteps }
     ];
-    const explanation = 'These are the tenant-wide defaults for ordinary users: who can register applications, who can create tenants, who can create security groups, who can invite guests, how much of the directory a guest can see, and which app-consent policy applies to users. Security group creation is shown in the table and is not raised as a finding. A setting the authorization policy did not include is left as not checked.';
+    const explanation = 'These are the tenant-wide defaults for ordinary users: who can register applications, who can create tenants, who can create security groups, who can invite guests, how much of the directory a guest can see, and which app-consent policy applies to users. Creating security groups, invites by members together with guest inviters and admins, and the default limited guest role are shown in the table and are not findings. A setting the authorization policy did not include is left as not checked.';
 
     const policyObject = source.policy;
-    const readable = !!(source.available && policyObject && typeof policyObject === 'object' && !Array.isArray(policyObject));
+    const readable = !!(source.available && isPlainPolicyObject(policyObject));
     if (!readable) {
       const reason = source.available ? 'error' : (source.reason || 'error');
       const message = source.available
@@ -1705,14 +1728,17 @@
       });
     }
 
-    const perms = (policyObject.defaultUserRolePermissions && typeof policyObject.defaultUserRolePermissions === 'object')
+    const permsObject = hasProperty(policyObject, 'defaultUserRolePermissions')
       ? policyObject.defaultUserRolePermissions
+      : null;
+    const perms = (permsObject && typeof permsObject === 'object' && !Array.isArray(permsObject))
+      ? permsObject
       : null;
     const findings = [];
     const rows = [];
     const skipped = [];
     const subject = 'Tenant defaults';
-    const subjectId = policyObject.id || '';
+    const subjectId = hasProperty(policyObject, 'id') ? String(policyObject.id) : '';
 
     if (!perms) {
       skipped.push('who can register applications', 'who can create tenants', 'who can create security groups');
@@ -1731,7 +1757,7 @@
           title: 'Users can register applications',
           subject,
           subjectId,
-          detail: 'Any member can create an app registration and becomes its owner, which includes adding a password to that app. Microsoft recommends limiting app creation to privileged users. Turn Users can register applications off, then give the Application Developer role only to people who need it.',
+          detail: 'By default, all users can register applications, and this can be restricted by setting Users can register applications to No and assigning the Application Developer role only to people who need it (https://learn.microsoft.com/en-us/entra/identity/role-based-access-control/delegate-app-roles and https://learn.microsoft.com/en-us/entra/fundamentals/users-default-permissions). Any member who registers an application becomes its owner, which includes adding a password to that app. OwnerMap rates this medium because any member can register an application.',
           steps: appSteps
         }));
         rows.push(tenantRow('Users can register applications', 'Any member', 'medium'));
@@ -1753,7 +1779,7 @@
           title: 'Users can create tenants',
           subject,
           subjectId,
-          detail: 'Any member can create a new Microsoft Entra tenant and becomes its Global Administrator. Microsoft describes that tenant as outside this organization\'s governance, where it can be used for consent phishing or impersonation. Turn on Restrict non-admin users from creating tenants. People who still need to create tenants can have the Tenant Creator role.',
+          detail: 'Any member can create a new Microsoft Entra tenant and becomes its Global Administrator (https://learn.microsoft.com/en-us/entra/fundamentals/users-default-permissions). Microsoft describes that tenant as outside this organization\'s governance, where it can be used for consent phishing or impersonation (https://learn.microsoft.com/en-us/entra/fundamentals/zero-trust-protect-tenants). Turn on Restrict non-admin users from creating tenants. People who still need to create tenants can have the Tenant Creator role. OwnerMap rates this high because the creator becomes Global Administrator of that new tenant.',
           steps: tenantSteps
         }));
         rows.push(tenantRow('Users can create tenants', 'Any member', 'high'));
@@ -1790,22 +1816,12 @@
         title: 'Anyone, including guests, can invite guests',
         subject,
         subjectId,
-        detail: 'Anyone in the organization can invite guests, including guests themselves. Microsoft warns that a compromised guest can then invite more guests. Limit invites to Global Administrator, User Administrator, and Guest Inviter.',
+        detail: 'Anyone in the organization can invite guests, including guests themselves. That is the most inclusive guest-invite setting (https://learn.microsoft.com/en-us/entra/external-id/external-collaboration-settings-configure and https://learn.microsoft.com/en-us/graph/api/resources/authorizationpolicy?view=graph-rest-1.0). Learn states: "Allowing guests to invite other guests to your directory means that guest invites can occur outside of entitlement management. We recommend setting Guests can invite to No to only allow for properly governed invitations." (https://learn.microsoft.com/en-us/entra/id-governance/entitlement-management-external-users). OwnerMap rates this high because guests can invite other guests.',
         steps: inviteSteps
       }));
       rows.push(tenantRow('Who can invite guests', 'Anyone, including guests', 'high'));
     } else if (invitesKey === 'adminsguestinvitersandallmembers') {
-      findings.push(finding({
-        id: 'td:guest-invites',
-        checkId: 'tenantDefaults',
-        severity: 'medium',
-        title: 'Any member can invite guests',
-        subject,
-        subjectId,
-        detail: 'Every member can invite guests. Guests cannot invite other guests with this setting. Microsoft\'s increased-security guidance is stricter: only Global Administrator, User Administrator, and Guest Inviter should invite guests.',
-        steps: inviteSteps
-      }));
-      rows.push(tenantRow('Who can invite guests', 'Members and guest-inviter admins', 'medium'));
+      rows.push(tenantRow('Who can invite guests', 'Members and guest-inviter admins', 'ok'));
     } else if (invitesKey === 'adminsandguestinviters') {
       rows.push(tenantRow('Who can invite guests', 'Global Administrator, User Administrator, and Guest Inviter', 'ok'));
     } else if (invitesKey === 'none') {
@@ -1827,22 +1843,12 @@
         title: 'Guests have the same access as members',
         subject,
         subjectId,
-        detail: 'Guest user access is set to the same permissions as members. Guests can read the directory the way an employee can, including users, groups, and applications. Restrict guests to their own directory objects.',
+        detail: 'Guest user access is set to the same permissions as members, the most inclusive option. Guests can read the directory the way a member can, including users, groups, and applications (https://learn.microsoft.com/en-us/entra/identity/users/users-restrict-guest-permissions and https://learn.microsoft.com/en-us/entra/external-id/external-collaboration-settings-configure). OwnerMap rates this high because guests receive member directory permissions.',
         steps: guestRoleSteps
       }));
       rows.push(tenantRow('Guest directory access', 'Same as members', 'high'));
     } else if (roleRaw === GUEST_ROLE_LIMITED) {
-      findings.push(finding({
-        id: 'td:guest-role',
-        checkId: 'tenantDefaults',
-        severity: 'medium',
-        title: 'Guests can see other users and groups',
-        subject,
-        subjectId,
-        detail: 'Guest user access is the default limited role. Guests can see basic profiles of other users and the membership of non-hidden groups. Microsoft\'s increased-security guidance is to restrict guests to their own directory objects, so a compromised guest learns less from the directory.',
-        steps: guestRoleSteps
-      }));
-      rows.push(tenantRow('Guest directory access', 'Default limited guest', 'medium'));
+      rows.push(tenantRow('Guest directory access', 'Default limited guest', 'ok'));
     } else if (roleRaw === GUEST_ROLE_RESTRICTED) {
       rows.push(tenantRow('Guest directory access', 'Own profile only', 'ok'));
     } else {
@@ -1874,7 +1880,7 @@
           title: broad ? 'Users can grant broad application consent' : 'Users can consent to any app',
           subject,
           subjectId,
-          detail: 'User consent includes ' + riskyIds.map(consentPlain).join('; ') + '. Microsoft recommends turning user consent off, or limiting it to verified publishers and selected low-impact permissions. An empty user-consent list means user consent is off. Policies that only cover apps the user owns are a separate setting and are not this finding.',
+          detail: consentDetail(riskyIds),
           steps: consentSteps
         }));
         rows.push(tenantRow('User consent to apps', riskyIds.map(consentPlain).join('; '), 'high'));
@@ -1907,7 +1913,7 @@
       rows,
       columns: tenantColumns(),
       headline,
-      stats: { judged: rows.filter(row => row.severity !== 'unavailable').length }
+      stats: {}
     });
   }
 
