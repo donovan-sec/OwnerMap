@@ -10,6 +10,7 @@
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   const STALE_DAYS = 90;
   const EXPIRING_DAYS = 30;
+  const LONG_LIVED_YEARS = 2;
   const MS_FIRST_PARTY_TENANT = 'f8cdef31-a31e-4b4a-93e4-5f571e91255a';
   const GRAPH_APP_ID = '00000003-0000-0000-c000-000000000000';
   const BROAD_USERS_MEDIUM = 5;
@@ -735,6 +736,30 @@
     return { state: 'ok', end, days: daysLeft };
   }
 
+  /** Anniversary of ms plus whole calendar years, in UTC. 29 February lands on 28 February when the target year is not a leap year. */
+  function addUtcYears(ms, years) {
+    const date = new Date(ms);
+    const day = date.getUTCDate();
+    date.setUTCFullYear(date.getUTCFullYear() + years);
+    if (date.getUTCDate() !== day) date.setUTCDate(0);
+    return date.getTime();
+  }
+
+  /**
+   * Lifetime taken only from startDateTime and endDateTime already on the credential.
+   * Long-lived means the end is after the start plus LONG_LIVED_YEARS calendar years.
+   * An end that lands on that anniversary is not long-lived.
+   * Returns null when either date is missing or the end is before the start.
+   */
+  function longLivedCredential(credential) {
+    if (!credential) return null;
+    const start = parseTime(credential.startDateTime);
+    const end = parseTime(credential.endDateTime);
+    if (start === null || end === null || end < start) return null;
+    const limit = addUtcYears(start, LONG_LIVED_YEARS);
+    return { start, end, limit, longLived: end > limit };
+  }
+
   function isFirstParty(sp) {
     return String(sp && sp.appOwnerOrganizationId || '').toLowerCase() === MS_FIRST_PARTY_TENANT;
   }
@@ -760,6 +785,14 @@
       'Delete the expired secret after the integration works.',
       'Put a reminder on the calendar a week before the new expiry date.'
     ];
+    const stepsLongLived = [
+      'Open the Entra admin center → Applications → App registrations → the app → Certificates & secrets.',
+      'Create a new client secret or, better, a certificate that expires in 2 years or less. Copy the secret value when it is shown. Microsoft will not show it again.',
+      'Update the application or integration that uses the old secret so it uses the new one.',
+      'Delete the long-lived secret or certificate after the integration works.',
+      'Put a reminder on the calendar a week before the new expiry date.'
+    ];
+    const stepsOwnerlessSecret = stepsOwner.concat(stepsSecret);
     const stepsPriv = [
       'Open the Entra admin center → Applications → Enterprise applications, and open the app.',
       'Select Permissions and review the Microsoft Graph application permissions.',
@@ -787,28 +820,50 @@
     const rows = [];
     const seenCreds = new Set();
 
-    function pushCredFindings(subject, label, credentials, kindLabel) {
+    // One finding per credential key. Expired or expiring wins over long-lived,
+    // so the same secret is not listed twice. When the app also has no owner,
+    // that fact is folded into the expiry finding instead of a second credential finding.
+    function pushCredFindings(subject, label, credentials, kindLabel, ownerless) {
       asArray(credentials).forEach(credential => {
         const state = credentialState(credential, nowMs, expiringDays);
-        if (!state || state.state === 'ok') return;
+        const life = longLivedCredential(credential);
+        const expiredOrExpiring = !!(state && state.state !== 'ok');
+        const longLived = !!(life && life.longLived);
+        if (!expiredOrExpiring && !longLived) return;
         const key = (subject.id || subject.name) + ':' + (credential.keyId || credential.displayName || credential.endDateTime);
         if (seenCreds.has(key)) return;
         seenCreds.add(key);
         const name = credential.displayName || kindLabel;
-        const when = formatDate(state.end);
-        const expired = state.state === 'expired';
-        const relative = state.days === 0
-          ? 'today'
-          : (expired ? plural(state.days, 'day') + ' ago' : plural(state.days, 'day') + ' from now');
+        if (expiredOrExpiring) {
+          const when = formatDate(state.end);
+          const expired = state.state === 'expired';
+          const relative = state.days === 0
+            ? 'today'
+            : (expired ? plural(state.days, 'day') + ' ago' : plural(state.days, 'day') + ' from now');
+          let detail = label + ' "' + name + '" ' + (expired ? 'expired on ' : 'expires on ') + when + ' (' + relative + ').';
+          if (longLived) detail += ' It was also valid for more than 2 years.';
+          if (ownerless) detail += ' Nobody owns this app, so nobody is assigned to renew it.';
+          findings.push(finding({
+            id: 'apps:cred:' + key,
+            checkId: 'applications',
+            severity: expired ? 'high' : 'medium',
+            title: (expired ? 'Expired app credential' : 'App credential expiring soon') + (ownerless ? ' on an ownerless app' : ''),
+            subject: subject.name,
+            subjectId: subject.rowId,
+            detail,
+            steps: ownerless ? stepsOwnerlessSecret : stepsSecret
+          }));
+          return;
+        }
         findings.push(finding({
           id: 'apps:cred:' + key,
           checkId: 'applications',
-          severity: expired ? 'high' : 'medium',
-          title: expired ? 'Expired app credential' : 'App credential expiring soon',
+          severity: 'medium',
+          title: 'Long-lived app credential',
           subject: subject.name,
           subjectId: subject.rowId,
-          detail: label + ' "' + name + '" ' + (expired ? 'expired on ' : 'expires on ') + when + ' (' + relative + ').',
-          steps: stepsSecret
+          detail: label + ' "' + name + '" is valid from ' + formatDate(life.start) + ' to ' + formatDate(life.end) + ', which is more than 2 years.',
+          steps: stepsLongLived
         }));
       });
     }
@@ -837,7 +892,13 @@
           steps: stepsOwner
         }));
       }
-      pushCredFindings({ id: 'app:' + (app.appId || app.id), rowId: app.id || app.appId, name }, 'App registration secret or certificate', asArray(app.passwordCredentials).concat(asArray(app.keyCredentials)), 'Credential');
+      pushCredFindings(
+        { id: 'app:' + (app.appId || app.id), rowId: app.id || app.appId, name },
+        'App registration secret or certificate',
+        asArray(app.passwordCredentials).concat(asArray(app.keyCredentials)),
+        'Credential',
+        owners.length === 0
+      );
     });
 
     servicePrincipals.forEach(sp => {
@@ -886,7 +947,8 @@
 
       if (!firstParty) {
         const credSubject = { id: 'sp:' + (sp.appId || sp.id), rowId: sp.id, name };
-        pushCredFindings(credSubject, 'Enterprise app credential', asArray(sp.passwordCredentials).concat(asArray(sp.keyCredentials)), 'Credential');
+        const credOwnerless = !owners.length && !registrationOwned;
+        pushCredFindings(credSubject, 'Enterprise app credential', asArray(sp.passwordCredentials).concat(asArray(sp.keyCredentials)), 'Credential', credOwnerless);
       }
 
       if (firstParty) return;
@@ -961,10 +1023,11 @@
       available: snapshot.applicationsAvailable !== false,
       unavailableMessage: snapshot.applicationsMessage || '',
       note: notes.join(' '),
-      explanation: 'App registrations and enterprise apps can hold passwords and broad access that keep working after the person who set them up has left. This check looks for apps with no owner, secrets or certificates that are expired or expire within ' + expiringDays + ' days, and Microsoft Graph application permissions that can read or change large parts of the tenant. Built-in Microsoft apps are left out of the owner list so the report stays about your own apps.',
+      explanation: 'App registrations and enterprise apps can hold passwords and broad access that keep working after the person who set them up has left. This check looks for apps with no owner, secrets or certificates that are expired or expire within ' + expiringDays + ' days, secrets or certificates that stay valid for more than 2 years, and Microsoft Graph application permissions that can read or change large parts of the tenant. When an expiring or expired credential sits on an app with no owner, that credential finding says so, because nobody is assigned to renew it. Built-in Microsoft apps are left out of the owner list so the report stays about your own apps.',
       sections: [
         { title: 'Give the app an owner', steps: stepsOwner },
         { title: 'Renew a secret or certificate', steps: stepsSecret },
+        { title: 'Shorten a long-lived secret or certificate', steps: stepsLongLived },
         { title: 'Remove powerful Graph permissions', steps: stepsPriv }
       ],
       steps: [],
@@ -1520,6 +1583,7 @@
   return {
     STALE_DAYS,
     EXPIRING_DAYS,
+    LONG_LIVED_YEARS,
     MS_FIRST_PARTY_TENANT,
     GRAPH_APP_ID,
     PERMISSIONS,
@@ -1534,6 +1598,7 @@
     findingsToCsv,
     classifyGroupType,
     credentialState,
+    longLivedCredential,
     policyRequiresMfa,
     policyCoversAllUsers,
     legacyCoverage,

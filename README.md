@@ -17,7 +17,7 @@ The page maps group owners and members, then adds the checks a small tenant usua
 | Stale accounts | Enabled employees with no sign-in in 90 days. Uses `signInActivity`. Needs Entra ID P1 and `AuditLog.Read.All`. Skipped with a clear message when that is unavailable. |
 | Disabled accounts | Blocked users who are still in a group, still own a group, or still hold a license. |
 | Guest accounts | Every guest, with stale guests (no sign-in in 90 days, or invited 90+ days ago and never signed in) called out. |
-| Apps and service principals | Your app registrations and enterprise apps: no owner, expired or soon-to-expire secrets and certificates (30 days), and high-privilege Microsoft Graph application permissions. Built-in Microsoft apps are left out of the owner noise. |
+| Apps and service principals | Your app registrations and enterprise apps: no owner, expired or soon-to-expire secrets and certificates (30 days), secrets or certificates valid for more than 2 years, and high-privilege Microsoft Graph application permissions. An expired or soon-to-expire credential on an app with no owner is reported on that credential. Built-in Microsoft apps are left out of the owner noise. |
 | Licenses | Purchased versus assigned seats, plus licenses sitting on disabled or stale people. Huge free catalogs such as Power BI Free are not treated as wasted seats. |
 | Conditional Access | No turned-on policy requires MFA, legacy authentication is not blocked, policies left on report-only, and broad exclusions. Uses `Policy.Read.All`. Skipped with a clear message when the tenant has no Entra ID P1. If security defaults are on, the message says so. |
 
