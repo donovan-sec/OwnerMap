@@ -27,7 +27,7 @@
     { scope: 'Directory.Read.All', type: 'Delegated', required: true, license: 'Any', purpose: 'Read directory objects, on-prem sync flags, and subscribed licenses' },
     { scope: 'Application.Read.All', type: 'Delegated', required: true, license: 'Any', purpose: 'Read app registrations, enterprise apps, owners, and credentials' },
     { scope: 'AuditLog.Read.All', type: 'Delegated', required: false, license: 'Entra ID P1 or P2', purpose: 'Read signInActivity for stale accounts and stale guests' },
-    { scope: 'Policy.Read.All', type: 'Delegated', required: false, license: 'Entra ID P1 or P2', purpose: 'Read Conditional Access policies and security defaults' }
+    { scope: 'Policy.Read.All', type: 'Delegated', required: false, license: 'Entra ID P1 or P2', purpose: 'Read Conditional Access policies, security defaults, and tenant default settings' }
   ];
 
   const GRAPH_SCOPE = 'https://graph.microsoft.com/';
@@ -287,6 +287,15 @@
     }
     if (kind === 'conditionalAccess') {
       return 'Microsoft Graph did not return Conditional Access policies. This check was skipped. Every other check still ran.';
+    }
+    if (kind === 'tenantDefaults' && reason === 'license') {
+      return 'Microsoft Graph refused the authorization policy and reported a license or subscription limit. Tenant default settings were skipped. This check uses the delegated permission Policy.Read.All. Every other check still ran.';
+    }
+    if (kind === 'tenantDefaults' && reason === 'permission') {
+      return 'Tenant default settings need the delegated permission Policy.Read.All. An admin has to add that permission and click Grant admin consent. Tenant defaults were skipped. Every other check still ran.';
+    }
+    if (kind === 'tenantDefaults') {
+      return 'Microsoft Graph did not return the authorization policy. Tenant default settings were skipped. This check uses the delegated permission Policy.Read.All. Every other check still ran.';
     }
     return 'This check could not be completed.';
   }
@@ -1533,6 +1542,375 @@
     return toCsv(['Check', 'Severity', 'Subject', 'Title', 'Detail', 'Suggested fix'], records);
   }
 
+  /** Documented guestUserRoleId values. https://learn.microsoft.com/en-us/graph/api/resources/authorizationpolicy */
+  const GUEST_ROLE_SAME_AS_MEMBER = 'a0b1b346-4d3e-4e8b-98f8-753987be4970';
+  const GUEST_ROLE_LIMITED = '10dae51f-b6af-4016-8d66-8c2a99b929b3';
+  const GUEST_ROLE_RESTRICTED = '2af84b1e-32c8-42b7-82bc-daa82404023b';
+
+  /**
+   * User-consent policy ids assigned as managePermissionGrantsForSelf.{id}.
+   * Safe ids are the verified-publisher limit, Microsoft's managed recommendation,
+   * and the built-in mail-client allowlist. Risky ids are the legacy any-app policy
+   * and policies that include every application permission or admin consent.
+   */
+  const SAFE_USER_CONSENT = {
+    'microsoft-user-default-low': 'verified publishers and selected permissions',
+    'microsoft-user-default-recommended': "Microsoft's managed recommendation",
+    'microsoft-user-default-allow-consent-apps': 'selected mail apps',
+    'microsoft-user-allow-default-consent-apps': 'selected mail apps'
+  };
+  const LEGACY_USER_CONSENT = 'microsoft-user-default-legacy';
+  const BROAD_USER_CONSENT = {
+    'microsoft-all-application-permissions': 'all application permissions for any app',
+    'microsoft-all-application-permissions-verified': 'all application permissions for verified publishers and apps registered in this tenant',
+    'microsoft-application-admin': 'the application administrator consent policy',
+    'microsoft-company-admin': 'the company administrator consent policy'
+  };
+
+  function hasProperty(obj, key) {
+    return !!obj && Object.prototype.hasOwnProperty.call(obj, key) && obj[key] !== null && obj[key] !== undefined;
+  }
+
+  function consentSelfId(entry) {
+    const match = String(entry || '').trim().match(/^managepermissiongrantsforself\.(.+)$/i);
+    return match ? match[1].toLowerCase() : '';
+  }
+
+  function isOwnedConsentEntry(entry) {
+    return /^managepermissiongrantsforownedresource\./i.test(String(entry || '').trim());
+  }
+
+  function classifyUserConsent(list) {
+    if (!Array.isArray(list)) return { state: 'absent', safe: [], risky: [], unknown: [] };
+    const safe = [];
+    const risky = [];
+    const unknown = [];
+    let owned = 0;
+    let unrecognized = 0;
+    list.forEach(entry => {
+      if (typeof entry !== 'string' || !entry.trim()) {
+        if (entry !== undefined && entry !== null && String(entry).trim() !== '') unrecognized += 1;
+        return;
+      }
+      const selfId = consentSelfId(entry);
+      if (selfId) {
+        if (SAFE_USER_CONSENT[selfId]) safe.push(selfId);
+        else if (selfId === LEGACY_USER_CONSENT || BROAD_USER_CONSENT[selfId]) risky.push(selfId);
+        else unknown.push(selfId);
+        return;
+      }
+      if (isOwnedConsentEntry(entry)) {
+        owned += 1;
+        return;
+      }
+      unrecognized += 1;
+    });
+    if (!list.length) return { state: 'disabled', safe, risky, unknown };
+    if (risky.length) return { state: 'risky', safe, risky, unknown };
+    if (unknown.length || unrecognized) return { state: 'unknown', safe, risky, unknown };
+    if (safe.length) return { state: 'limited', safe, risky, unknown };
+    if (owned) return { state: 'disabled', safe, risky, unknown };
+    return { state: 'unknown', safe, risky, unknown };
+  }
+
+  function consentPlain(id) {
+    if (id === LEGACY_USER_CONSENT) return 'the legacy policy, which lets users consent to any app for permissions that do not require an admin';
+    if (BROAD_USER_CONSENT[id]) return BROAD_USER_CONSENT[id];
+    if (SAFE_USER_CONSENT[id]) return SAFE_USER_CONSENT[id];
+    return id;
+  }
+
+  function uniqueIds(ids) {
+    const seen = new Set();
+    const out = [];
+    ids.forEach(id => {
+      if (seen.has(id)) return;
+      seen.add(id);
+      out.push(id);
+    });
+    return out;
+  }
+
+  function tenantColumns() {
+    return [
+      { key: 'setting', label: 'Setting' },
+      { key: 'value', label: 'Current value' },
+      { key: 'severity', label: 'Severity' }
+    ];
+  }
+
+  function tenantRow(setting, value, severity) {
+    return { setting, value, severity };
+  }
+
+  function analyzeTenantDefaults(snapshot) {
+    const source = snapshot.authorizationPolicy || { available: false, reason: 'error' };
+    const appSteps = [
+      'Open the Microsoft Entra admin center → Identity → Users → User settings.',
+      'Set Users can register applications to No.',
+      'Give the Application Developer role only to people who should register apps.'
+    ];
+    const tenantSteps = [
+      'Open the Microsoft Entra admin center → Identity → Users → User settings.',
+      'Set Restrict non-admin users from creating tenants to Yes.',
+      'Give the Tenant Creator role only to people who should create tenants. The person who creates a tenant becomes its Global Administrator.'
+    ];
+    const inviteSteps = [
+      'Open the Microsoft Entra admin center → Identity → External Identities → External collaboration settings.',
+      'Under Guest invite settings, choose Only users assigned to specific admin roles can invite guest users.',
+      'That leaves invites to Global Administrator, User Administrator, and Guest Inviter.'
+    ];
+    const guestRoleSteps = [
+      'Open the Microsoft Entra admin center → Identity → External Identities → External collaboration settings.',
+      'Under Guest user access, choose Guest user access is restricted to properties and memberships of their own directory objects.',
+      'A guest who was given an admin role keeps that role. This setting changes the default guest permissions.'
+    ];
+    const consentSteps = [
+      'Open the Microsoft Entra admin center → Identity → Applications → Enterprise apps → Consent and permissions → User consent settings.',
+      'Choose Do not allow user consent, or Allow user consent for apps from verified publishers, for selected permissions.',
+      'The portal option Allow user consent for apps is the legacy policy. It applies to any application, for permissions that do not require an admin.',
+      'If you change the list with Microsoft Graph, keep entries that start with managePermissionGrantsForOwnedResource. Those let an owner manage consent for their own app. An empty user-consent list means user consent is off.'
+    ];
+    const sections = [
+      { title: 'Who can register applications', steps: appSteps },
+      { title: 'Who can create tenants', steps: tenantSteps },
+      { title: 'Who can invite guests', steps: inviteSteps },
+      { title: 'What guests can see', steps: guestRoleSteps },
+      { title: 'User consent to apps', steps: consentSteps }
+    ];
+    const explanation = 'These are the tenant-wide defaults for ordinary users: who can register applications, who can create tenants, who can create security groups, who can invite guests, how much of the directory a guest can see, and which app-consent policy applies to users. Security group creation is shown in the table and is not raised as a finding. A setting the authorization policy did not include is left as not checked.';
+
+    const policyObject = source.policy;
+    const readable = !!(source.available && policyObject && typeof policyObject === 'object' && !Array.isArray(policyObject));
+    if (!readable) {
+      const reason = source.available ? 'error' : (source.reason || 'error');
+      const message = source.available
+        ? unavailableMessage('tenantDefaults', 'error', null)
+        : (reason === 'license'
+          ? unavailableMessage('tenantDefaults', 'license', null)
+          : (source.message || unavailableMessage('tenantDefaults', reason, null)));
+      return checkResult({
+        id: 'tenantDefaults',
+        title: 'Tenant defaults',
+        nav: 'Defaults',
+        available: false,
+        unavailableMessage: message,
+        explanation,
+        sections,
+        findings: [],
+        rows: [],
+        columns: tenantColumns(),
+        headline: 'Tenant defaults unavailable',
+        stats: {}
+      });
+    }
+
+    const perms = (policyObject.defaultUserRolePermissions && typeof policyObject.defaultUserRolePermissions === 'object')
+      ? policyObject.defaultUserRolePermissions
+      : null;
+    const findings = [];
+    const rows = [];
+    const skipped = [];
+    const subject = 'Tenant defaults';
+    const subjectId = policyObject.id || '';
+
+    if (!perms) {
+      skipped.push('who can register applications', 'who can create tenants', 'who can create security groups');
+      rows.push(tenantRow('Users can register applications', 'Not returned', 'unavailable'));
+      rows.push(tenantRow('Users can create tenants', 'Not returned', 'unavailable'));
+      rows.push(tenantRow('Users can create security groups', 'Not returned', 'unavailable'));
+    } else {
+      if (!hasProperty(perms, 'allowedToCreateApps')) {
+        skipped.push('who can register applications');
+        rows.push(tenantRow('Users can register applications', 'Not returned', 'unavailable'));
+      } else if (perms.allowedToCreateApps === true) {
+        findings.push(finding({
+          id: 'td:create-apps',
+          checkId: 'tenantDefaults',
+          severity: 'medium',
+          title: 'Users can register applications',
+          subject,
+          subjectId,
+          detail: 'Any member can create an app registration and becomes its owner, which includes adding a password to that app. Microsoft recommends limiting app creation to privileged users. Turn Users can register applications off, then give the Application Developer role only to people who need it.',
+          steps: appSteps
+        }));
+        rows.push(tenantRow('Users can register applications', 'Any member', 'medium'));
+      } else if (perms.allowedToCreateApps === false) {
+        rows.push(tenantRow('Users can register applications', 'Privileged users', 'ok'));
+      } else {
+        skipped.push('who can register applications');
+        rows.push(tenantRow('Users can register applications', 'Not a documented value', 'unavailable'));
+      }
+
+      if (!hasProperty(perms, 'allowedToCreateTenants')) {
+        skipped.push('who can create tenants');
+        rows.push(tenantRow('Users can create tenants', 'Not returned', 'unavailable'));
+      } else if (perms.allowedToCreateTenants === true) {
+        findings.push(finding({
+          id: 'td:create-tenants',
+          checkId: 'tenantDefaults',
+          severity: 'high',
+          title: 'Users can create tenants',
+          subject,
+          subjectId,
+          detail: 'Any member can create a new Microsoft Entra tenant and becomes its Global Administrator. Microsoft describes that tenant as outside this organization\'s governance, where it can be used for consent phishing or impersonation. Turn on Restrict non-admin users from creating tenants. People who still need to create tenants can have the Tenant Creator role.',
+          steps: tenantSteps
+        }));
+        rows.push(tenantRow('Users can create tenants', 'Any member', 'high'));
+      } else if (perms.allowedToCreateTenants === false) {
+        rows.push(tenantRow('Users can create tenants', 'Tenant Creator role', 'ok'));
+      } else {
+        skipped.push('who can create tenants');
+        rows.push(tenantRow('Users can create tenants', 'Not a documented value', 'unavailable'));
+      }
+
+      if (!hasProperty(perms, 'allowedToCreateSecurityGroups')) {
+        skipped.push('who can create security groups');
+        rows.push(tenantRow('Users can create security groups', 'Not returned', 'unavailable'));
+      } else if (perms.allowedToCreateSecurityGroups === true) {
+        rows.push(tenantRow('Users can create security groups', 'Any member', 'ok'));
+      } else if (perms.allowedToCreateSecurityGroups === false) {
+        rows.push(tenantRow('Users can create security groups', 'User Administrator and above', 'ok'));
+      } else {
+        skipped.push('who can create security groups');
+        rows.push(tenantRow('Users can create security groups', 'Not a documented value', 'unavailable'));
+      }
+    }
+
+    const invites = hasProperty(policyObject, 'allowInvitesFrom') ? String(policyObject.allowInvitesFrom).trim() : null;
+    const invitesKey = invites === null ? null : invites.toLowerCase();
+    if (invites === null) {
+      skipped.push('who can invite guests');
+      rows.push(tenantRow('Who can invite guests', 'Not returned', 'unavailable'));
+    } else if (invitesKey === 'everyone') {
+      findings.push(finding({
+        id: 'td:guest-invites',
+        checkId: 'tenantDefaults',
+        severity: 'high',
+        title: 'Anyone, including guests, can invite guests',
+        subject,
+        subjectId,
+        detail: 'Anyone in the organization can invite guests, including guests themselves. Microsoft warns that a compromised guest can then invite more guests. Limit invites to Global Administrator, User Administrator, and Guest Inviter.',
+        steps: inviteSteps
+      }));
+      rows.push(tenantRow('Who can invite guests', 'Anyone, including guests', 'high'));
+    } else if (invitesKey === 'adminsguestinvitersandallmembers') {
+      findings.push(finding({
+        id: 'td:guest-invites',
+        checkId: 'tenantDefaults',
+        severity: 'medium',
+        title: 'Any member can invite guests',
+        subject,
+        subjectId,
+        detail: 'Every member can invite guests. Guests cannot invite other guests with this setting. Microsoft\'s increased-security guidance is stricter: only Global Administrator, User Administrator, and Guest Inviter should invite guests.',
+        steps: inviteSteps
+      }));
+      rows.push(tenantRow('Who can invite guests', 'Members and guest-inviter admins', 'medium'));
+    } else if (invitesKey === 'adminsandguestinviters') {
+      rows.push(tenantRow('Who can invite guests', 'Global Administrator, User Administrator, and Guest Inviter', 'ok'));
+    } else if (invitesKey === 'none') {
+      rows.push(tenantRow('Who can invite guests', 'Nobody', 'ok'));
+    } else {
+      skipped.push('who can invite guests');
+      rows.push(tenantRow('Who can invite guests', 'Not a documented value', 'unavailable'));
+    }
+
+    const roleRaw = hasProperty(policyObject, 'guestUserRoleId') ? String(policyObject.guestUserRoleId).trim().toLowerCase() : null;
+    if (roleRaw === null) {
+      skipped.push('guest directory access');
+      rows.push(tenantRow('Guest directory access', 'Not returned', 'unavailable'));
+    } else if (roleRaw === GUEST_ROLE_SAME_AS_MEMBER) {
+      findings.push(finding({
+        id: 'td:guest-role',
+        checkId: 'tenantDefaults',
+        severity: 'high',
+        title: 'Guests have the same access as members',
+        subject,
+        subjectId,
+        detail: 'Guest user access is set to the same permissions as members. Guests can read the directory the way an employee can, including users, groups, and applications. Restrict guests to their own directory objects.',
+        steps: guestRoleSteps
+      }));
+      rows.push(tenantRow('Guest directory access', 'Same as members', 'high'));
+    } else if (roleRaw === GUEST_ROLE_LIMITED) {
+      findings.push(finding({
+        id: 'td:guest-role',
+        checkId: 'tenantDefaults',
+        severity: 'medium',
+        title: 'Guests can see other users and groups',
+        subject,
+        subjectId,
+        detail: 'Guest user access is the default limited role. Guests can see basic profiles of other users and the membership of non-hidden groups. Microsoft\'s increased-security guidance is to restrict guests to their own directory objects, so a compromised guest learns less from the directory.',
+        steps: guestRoleSteps
+      }));
+      rows.push(tenantRow('Guest directory access', 'Default limited guest', 'medium'));
+    } else if (roleRaw === GUEST_ROLE_RESTRICTED) {
+      rows.push(tenantRow('Guest directory access', 'Own profile only', 'ok'));
+    } else {
+      skipped.push('guest directory access');
+      rows.push(tenantRow('Guest directory access', 'Not a documented value', 'unavailable'));
+    }
+
+    let consentNote = '';
+    if (!perms || !hasProperty(perms, 'permissionGrantPoliciesAssigned')) {
+      skipped.push('user consent');
+      rows.push(tenantRow('User consent to apps', 'Not returned', 'unavailable'));
+    } else {
+      const consent = classifyUserConsent(perms.permissionGrantPoliciesAssigned);
+      if (consent.state === 'absent') {
+        skipped.push('user consent');
+        rows.push(tenantRow('User consent to apps', 'Not returned', 'unavailable'));
+      } else if (consent.state === 'disabled') {
+        rows.push(tenantRow('User consent to apps', 'Off', 'ok'));
+      } else if (consent.state === 'limited') {
+        const labels = uniqueIds(consent.safe).map(id => SAFE_USER_CONSENT[id]);
+        rows.push(tenantRow('User consent to apps', labels.join('; '), 'ok'));
+      } else if (consent.state === 'risky') {
+        const riskyIds = uniqueIds(consent.risky);
+        const broad = riskyIds.some(id => BROAD_USER_CONSENT[id]);
+        findings.push(finding({
+          id: 'td:user-consent',
+          checkId: 'tenantDefaults',
+          severity: 'high',
+          title: broad ? 'Users can grant broad application consent' : 'Users can consent to any app',
+          subject,
+          subjectId,
+          detail: 'User consent includes ' + riskyIds.map(consentPlain).join('; ') + '. Microsoft recommends turning user consent off, or limiting it to verified publishers and selected low-impact permissions. An empty user-consent list means user consent is off. Policies that only cover apps the user owns are a separate setting and are not this finding.',
+          steps: consentSteps
+        }));
+        rows.push(tenantRow('User consent to apps', riskyIds.map(consentPlain).join('; '), 'high'));
+      } else {
+        consentNote = 'User consent uses a policy this check does not recognize, so it was not judged.';
+        rows.push(tenantRow('User consent to apps', 'Custom or unrecognized policy', 'unavailable'));
+      }
+    }
+
+    const noteParts = [];
+    if (skipped.length) {
+      noteParts.push('These settings were missing or not a documented value, so they were not judged: ' + skipped.join(', ') + '.');
+    }
+    if (consentNote) noteParts.push(consentNote);
+    const headline = findings.length
+      ? plural(findings.length, 'risky default')
+      : (skipped.length || consentNote
+        ? 'No risky default in the settings Microsoft returned'
+        : 'Tenant defaults are tightened');
+
+    return checkResult({
+      id: 'tenantDefaults',
+      title: 'Tenant defaults',
+      nav: 'Defaults',
+      available: true,
+      note: noteParts.join(' '),
+      explanation,
+      sections,
+      findings,
+      rows,
+      columns: tenantColumns(),
+      headline,
+      stats: { judged: rows.filter(row => row.severity !== 'unavailable').length }
+    });
+  }
+
   function analyze(snapshot) {
     const input = snapshot || {};
     const nowMs = parseTime(input.now) || Date.now();
@@ -1554,9 +1932,10 @@
       guests: analyzeGuests(input.users, signIn, nowMs, staleDays),
       applications: analyzeApps(input, nowMs, expiringDays),
       licenses: licenseCheck,
-      conditionalAccess: analyzeConditionalAccess(input)
+      conditionalAccess: analyzeConditionalAccess(input),
+      tenantDefaults: analyzeTenantDefaults(input)
     };
-    const order = ['groups', 'staleAccounts', 'disabledUsers', 'guests', 'applications', 'licenses', 'conditionalAccess'];
+    const order = ['groups', 'staleAccounts', 'disabledUsers', 'guests', 'applications', 'licenses', 'conditionalAccess', 'tenantDefaults'];
     const counts = { high: 0, medium: 0, low: 0 };
     const unavailable = [];
     order.forEach(id => {

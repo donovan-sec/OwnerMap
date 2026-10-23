@@ -20,6 +20,7 @@ The page maps group owners and members, then adds the checks a small tenant usua
 | Apps and service principals | Your app registrations and enterprise apps: no owner, expired or soon-to-expire secrets and certificates (30 days), secrets or certificates valid for more than 2 years, and high-privilege Microsoft Graph application permissions. An expired or soon-to-expire credential on an app with no owner is reported on that credential. Built-in Microsoft apps are left out of the owner noise. |
 | Licenses | Purchased versus assigned seats, plus licenses sitting on disabled or stale people. Huge free catalogs such as Power BI Free are not treated as wasted seats. |
 | Conditional Access | No turned-on policy requires MFA, legacy authentication is not blocked, policies left on report-only, and broad exclusions. Uses `Policy.Read.All`. Skipped with a clear message when the tenant has no Entra ID P1. If security defaults are on, the message says so. |
+| Tenant defaults | Who can register applications, who can create tenants, who can create security groups, who can invite guests, how much of the directory guests can see, and whether user consent is a broad or legacy policy. Uses the optional `Policy.Read.All` permission on Microsoft Graph v1.0. It does not need Entra ID P1. A setting the policy does not include is left as not checked. Skipped with a clear message when the policy cannot be read. |
 
 Each check explains what the result means and lists steps a non-security IT person can follow in the Microsoft 365 and Entra admin centers.
 
@@ -38,7 +39,7 @@ Create one app registration and add these **delegated** Microsoft Graph permissi
 | `Directory.Read.All` | Yes | Any | Read directory objects, on-prem sync flags, and subscribed licenses |
 | `Application.Read.All` | Yes | Any | Read app registrations, enterprise apps, owners, and credentials |
 | `AuditLog.Read.All` | No | Entra ID P1 or P2 | Read `signInActivity` for stale accounts and stale guests |
-| `Policy.Read.All` | No | Entra ID P1 or P2 | Read Conditional Access policies and security defaults |
+| `Policy.Read.All` | No | Entra ID P1 or P2 | Read Conditional Access policies, security defaults, and tenant default settings |
 
 The signed-in person also needs a directory role that can read these objects. **Global Reader** is enough. OwnerMap cannot change users, groups, policies, or licenses.
 
@@ -47,6 +48,7 @@ The signed-in person also needs a directory role that can read these objects. **
 - Groups, disabled accounts, guests (the list), apps, and license counts work on any Microsoft 365 tenant, including Business Basic.
 - **Stale accounts and stale guests** need at least one **Entra ID P1** (or P2) license in the tenant, plus `AuditLog.Read.All`. Without that, Microsoft hides sign-in dates. The rest of the report still runs.
 - **Conditional Access** needs **Entra ID P1** (or P2) and `Policy.Read.All`. Without P1 the check says so. If security defaults are turned on, the message explains what that does and what it does not do.
+- **Tenant default settings** use the optional `Policy.Read.All` permission and Microsoft Graph v1.0 `authorizationPolicy`. They do not need Entra ID P1. Without that permission the check says so and every other check still runs.
 
 ## Setup
 
@@ -82,7 +84,7 @@ Open the URL you registered. Enter the tenant ID and client ID. Choose **Sign in
 - **Print one-page summary** — the browser print dialog. Choose Save as PDF for a one-page handout.
 - **Export CSV** — that check's table. **Export all findings** — every finding and its fix steps.
 
-A check that says **Not checked** did not fail open. Sign-in dates or Conditional Access were skipped because of licensing or consent. The message on that tab says which one.
+A check that says **Not checked** did not fail open. Sign-in dates, Conditional Access, or tenant default settings were skipped because of licensing or consent. The message on that tab says which one.
 
 ## Security posture
 

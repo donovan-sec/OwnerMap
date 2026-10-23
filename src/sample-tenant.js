@@ -279,7 +279,25 @@
           }
         ]
       },
-      securityDefaults: { known: true, enabled: false }
+      securityDefaults: { known: true, enabled: false },
+      authorizationPolicy: {
+        available: true,
+        reason: 'ok',
+        policy: {
+          id: 'authorizationPolicy',
+          allowInvitesFrom: 'everyone',
+          guestUserRoleId: '10dae51f-b6af-4016-8d66-8c2a99b929b3',
+          defaultUserRolePermissions: {
+            allowedToCreateApps: true,
+            allowedToCreateTenants: true,
+            allowedToCreateSecurityGroups: true,
+            allowedToReadOtherUsers: true,
+            permissionGrantPoliciesAssigned: [
+              'ManagePermissionGrantsForSelf.microsoft-user-default-legacy'
+            ]
+          }
+        }
+      }
     };
   }
 
