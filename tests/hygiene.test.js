@@ -430,6 +430,225 @@ test('app owners, credential expiry, and Graph privileges use mocked directory o
   });
 });
 
+test('long-lived and ownerless credentials reuse fetched dates and stay one finding per credential', () => {
+  const nowMs = Date.parse(NOW);
+  assert.equal(h.LONG_LIVED_YEARS, 2);
+  assert.equal(h.EXPIRING_DAYS, 30);
+
+  function life(start, end) {
+    return h.longLivedCredential({ startDateTime: start, endDateTime: end });
+  }
+
+  assert.equal(life('2025-06-01T00:00:00Z', '2027-06-01T00:00:00Z').longLived, false);
+  assert.equal(life('2025-06-01T00:00:00Z', '2027-05-31T00:00:00Z').longLived, false);
+  assert.equal(life('2025-06-01T00:00:00Z', '2027-06-02T00:00:00Z').longLived, true);
+  assert.equal(life('2024-02-29T00:00:00Z', '2026-02-28T00:00:00Z').longLived, false);
+  assert.equal(life('2024-02-29T00:00:00Z', '2026-03-01T00:00:00Z').longLived, true);
+  assert.equal(h.longLivedCredential({ endDateTime: '2027-06-02T00:00:00Z' }), null);
+  assert.equal(h.longLivedCredential({ startDateTime: '2025-06-01T00:00:00Z' }), null);
+  assert.equal(h.longLivedCredential({ startDateTime: '2027-06-02T00:00:00Z', endDateTime: '2025-06-01T00:00:00Z' }), null);
+  assert.equal(h.longLivedCredential(null), null);
+
+  const atThreshold = h.credentialState({ endDateTime: '2026-11-19T12:00:00Z' }, nowMs, h.EXPIRING_DAYS);
+  assert.equal(atThreshold.state, 'expiring');
+  assert.equal(atThreshold.days, 30);
+  assert.equal(h.credentialState({ endDateTime: '2026-11-20T12:00:00Z' }, nowMs, h.EXPIRING_DAYS).state, 'ok');
+  assert.equal(h.credentialState({ endDateTime: '2026-01-01T00:00:00Z' }, nowMs, h.EXPIRING_DAYS).state, 'expired');
+
+  const ada = [{ displayName: 'Ada', userPrincipalName: 'ada@example.com' }];
+  function secret(keyId, name, start, end) {
+    return { keyId, displayName: name, startDateTime: start, endDateTime: end };
+  }
+  function registration(id, name, owners, passwords, keys) {
+    return {
+      id,
+      appId: id,
+      displayName: name,
+      owners,
+      passwordCredentials: passwords,
+      keyCredentials: keys
+    };
+  }
+
+  const exactPw = secret('exact-pw', 'exact password', '2025-06-01T00:00:00Z', '2027-06-01T00:00:00Z');
+  const minusPw = secret('minus-pw', 'minus password', '2025-06-01T00:00:00Z', '2027-05-31T00:00:00Z');
+  const plusPw = secret('plus-pw', 'plus password', '2025-06-01T00:00:00Z', '2027-06-02T00:00:00Z');
+  const exactKey = secret('exact-key', 'exact cert', '2025-06-01T00:00:00Z', '2027-06-01T00:00:00Z');
+  const minusKey = secret('minus-key', 'minus cert', '2025-06-01T00:00:00Z', '2027-05-31T00:00:00Z');
+  const plusKey = secret('plus-key', 'plus cert', '2025-06-01T00:00:00Z', '2027-06-02T00:00:00Z');
+  const thresholdExact = secret('threshold-exact', 'threshold exact', '2024-11-19T12:00:00Z', '2026-11-19T12:00:00Z');
+  const thresholdLong = secret('threshold-long', 'threshold long', '2024-11-18T12:00:00Z', '2026-11-19T12:00:00Z');
+  const expiredLongPw = secret('expired-long-pw', 'expired password', '2023-01-01T00:00:00Z', '2026-01-01T00:00:00Z');
+  const expiredLongKey = secret('expired-long-key', 'expired cert', '2023-01-01T00:00:00Z', '2026-01-01T00:00:00Z');
+  const expiredNoStart = { keyId: 'expired-nostart', displayName: 'old password', endDateTime: '2026-01-01T00:00:00Z' };
+  const expiringPw = secret('expiring-pw', 'soon password', '2026-01-01T00:00:00Z', '2026-10-30T00:00:00Z');
+  const expiringKey = secret('expiring-key', 'soon cert', '2026-01-01T00:00:00Z', '2026-10-25T00:00:00Z');
+  const duplicate = secret('dup', 'duplicate secret', '2024-01-01T00:00:00Z', '2027-06-02T00:00:00Z');
+
+  const report = h.analyze(base({
+    applications: [
+      registration('exact-pw-app', 'Exact Password', ada, [exactPw], []),
+      registration('minus-pw-app', 'Minus Password', ada, [minusPw], []),
+      registration('plus-pw-app', 'Plus Password', ada, [plusPw], []),
+      registration('exact-key-app', 'Exact Cert', ada, [], [exactKey]),
+      registration('minus-key-app', 'Minus Cert', ada, [], [minusKey]),
+      registration('plus-key-app', 'Plus Cert', ada, [], [plusKey]),
+      registration('both-types', 'Both Types', ada, [exactPw], [plusKey]),
+      registration('threshold-owned', 'Threshold Owned', ada, [thresholdExact], []),
+      registration('threshold-orphan', 'Threshold Orphan', [], [], [thresholdLong]),
+      registration('expired-owned', 'Expired Owned', ada, [expiredLongPw], []),
+      registration('expired-orphan', 'Expired Orphan', [], [], [expiredLongKey]),
+      registration('expired-nostart', 'Expired No Start', ada, [expiredNoStart], []),
+      registration('expiring-orphan', 'Expiring Orphan', [], [expiringPw], [expiringKey]),
+      registration('long-orphan', 'Long Orphan', [], [plusPw], []),
+      registration('no-creds-owned', 'No Creds Owned', ada, [], []),
+      registration('no-creds-orphan', 'No Creds Orphan', [], [], []),
+      { id: 'omitted', appId: 'omitted', displayName: 'Omitted Creds', owners: ada },
+      registration('duplicates', 'Duplicate Secret', ada, [duplicate, duplicate], []),
+      registration('reg-owned', 'Registration Owned', ada, [], []),
+      registration('empty-entries', 'Empty Entries', ada, [null, {}], [])
+    ],
+    servicePrincipals: [
+      {
+        id: 'sp-long',
+        appId: 'sp-long',
+        displayName: 'Owned Enterprise',
+        servicePrincipalType: 'Application',
+        appOwnerOrganizationId: sample.TENANT,
+        passwordCredentials: [plusPw],
+        keyCredentials: [],
+        owners: ada
+      },
+      {
+        id: 'sp-covered',
+        appId: 'reg-owned',
+        displayName: 'Covered Enterprise',
+        servicePrincipalType: 'Application',
+        appOwnerOrganizationId: sample.TENANT,
+        passwordCredentials: [],
+        keyCredentials: [expiringKey],
+        owners: []
+      },
+      {
+        id: 'sp-orphan',
+        appId: 'sp-orphan',
+        displayName: 'Orphan Enterprise',
+        servicePrincipalType: 'Application',
+        appOwnerOrganizationId: sample.TENANT,
+        passwordCredentials: [expiredLongPw],
+        keyCredentials: [],
+        owners: []
+      },
+      {
+        id: 'sp-ms',
+        appId: 'sp-ms',
+        displayName: 'Microsoft Teams',
+        servicePrincipalType: 'Application',
+        appOwnerOrganizationId: h.MS_FIRST_PARTY_TENANT,
+        passwordCredentials: [expiredLongPw, plusPw],
+        keyCredentials: [expiredLongKey],
+        owners: []
+      }
+    ]
+  }));
+
+  const findings = report.checks.applications.findings;
+  function creds(subject) {
+    return findings.filter(item => item.subject === subject && item.id.indexOf('apps:cred:') === 0);
+  }
+  function titles(subject) {
+    return creds(subject).map(item => item.title);
+  }
+
+  ['Exact Password', 'Minus Password', 'Exact Cert', 'Minus Cert', 'No Creds Owned', 'Omitted Creds', 'Empty Entries'].forEach(subject => {
+    assert.deepEqual(titles(subject), [], subject);
+  });
+  assert.deepEqual(findings.filter(item => item.subject === 'No Creds Owned' || item.subject === 'Omitted Creds' || item.subject === 'Empty Entries'), []);
+  assert.deepEqual(titles('No Creds Orphan'), []);
+  assert.equal(findings.filter(item => item.subject === 'No Creds Orphan' && /no owner/i.test(item.title)).length, 1);
+
+  assert.deepEqual(titles('Plus Password'), ['Long-lived app credential']);
+  assert.deepEqual(titles('Plus Cert'), ['Long-lived app credential']);
+  assert.match(creds('Plus Password')[0].detail, /plus password/);
+  assert.match(creds('Plus Password')[0].detail, /more than 2 years/);
+  assert.match(creds('Plus Cert')[0].detail, /plus cert/);
+  assert.equal(creds('Plus Password')[0].severity, 'medium');
+  assert.ok(creds('Plus Cert')[0].steps.some(step => /2 years or less/.test(step)));
+
+  assert.deepEqual(titles('Both Types'), ['Long-lived app credential']);
+  assert.match(creds('Both Types')[0].detail, /plus cert/);
+
+  assert.deepEqual(titles('Threshold Owned'), ['App credential expiring soon']);
+  assert.doesNotMatch(creds('Threshold Owned')[0].detail, /more than 2 years/);
+  assert.equal(creds('Threshold Owned')[0].severity, 'medium');
+
+  assert.deepEqual(titles('Threshold Orphan'), ['App credential expiring soon on an ownerless app']);
+  assert.match(creds('Threshold Orphan')[0].detail, /more than 2 years/);
+  assert.match(creds('Threshold Orphan')[0].detail, /Nobody owns this app/);
+  assert.equal(findings.filter(item => item.subject === 'Threshold Orphan' && /no owner/i.test(item.title)).length, 1);
+  assert.equal(creds('Threshold Orphan')[0].steps.length, 8);
+
+  assert.deepEqual(titles('Expired Owned'), ['Expired app credential']);
+  assert.match(creds('Expired Owned')[0].detail, /more than 2 years/);
+  assert.equal(creds('Expired Owned')[0].severity, 'high');
+  assert.doesNotMatch(creds('Expired Owned')[0].detail, /Nobody owns this app/);
+
+  assert.deepEqual(titles('Expired Orphan'), ['Expired app credential on an ownerless app']);
+  assert.match(creds('Expired Orphan')[0].detail, /expired cert/);
+  assert.match(creds('Expired Orphan')[0].detail, /more than 2 years/);
+  assert.equal(findings.filter(item => item.subject === 'Expired Orphan' && /no owner/i.test(item.title)).length, 1);
+
+  assert.deepEqual(titles('Expired No Start'), ['Expired app credential']);
+  assert.doesNotMatch(creds('Expired No Start')[0].detail, /more than 2 years/);
+
+  assert.deepEqual(titles('Expiring Orphan').sort(), [
+    'App credential expiring soon on an ownerless app',
+    'App credential expiring soon on an ownerless app'
+  ]);
+  assert.equal(creds('Expiring Orphan').length, 2);
+  creds('Expiring Orphan').forEach(item => {
+    assert.equal(item.severity, 'medium');
+    assert.match(item.detail, /Nobody owns this app/);
+    assert.doesNotMatch(item.detail, /more than 2 years/);
+  });
+  assert.ok(creds('Expiring Orphan').some(item => /soon password/.test(item.detail)));
+  assert.ok(creds('Expiring Orphan').some(item => /soon cert/.test(item.detail)));
+  assert.equal(findings.filter(item => item.subject === 'Expiring Orphan' && /no owner/i.test(item.title)).length, 1);
+
+  assert.deepEqual(titles('Long Orphan'), ['Long-lived app credential']);
+  assert.equal(findings.filter(item => item.subject === 'Long Orphan' && item.title === 'App registration has no owner').length, 1);
+  assert.equal(creds('Long Orphan').some(item => /ownerless/.test(item.title)), false);
+
+  assert.equal(creds('Duplicate Secret').length, 1);
+  assert.equal(creds('Duplicate Secret')[0].title, 'Long-lived app credential');
+
+  assert.deepEqual(titles('Owned Enterprise'), ['Long-lived app credential']);
+  assert.match(creds('Owned Enterprise')[0].detail, /Enterprise app credential/);
+  assert.deepEqual(titles('Covered Enterprise'), ['App credential expiring soon']);
+  assert.doesNotMatch(creds('Covered Enterprise')[0].detail, /Nobody owns this app/);
+  assert.ok(findings.some(item => item.subject === 'Covered Enterprise' && item.title === 'Enterprise app has no owner'));
+  assert.deepEqual(titles('Orphan Enterprise'), ['Expired app credential on an ownerless app']);
+  assert.equal(findings.some(item => item.subject === 'Microsoft Teams'), false);
+
+  const shape = ['checkId', 'detail', 'id', 'severity', 'steps', 'subject', 'subjectId', 'title'];
+  creds('Plus Password').concat(creds('Expired Orphan'), creds('Threshold Orphan')).forEach(item => {
+    assert.deepEqual(Object.keys(item).sort(), shape);
+    assert.equal(item.checkId, 'applications');
+    assert.ok(item.steps.length >= 3);
+  });
+
+  const sampleFindings = h.analyze(sample.build()).checks.applications.findings;
+  const payroll = sampleFindings.filter(item => item.subject === 'Payroll Connector' && item.id.indexOf('apps:cred:') === 0);
+  assert.equal(payroll.length, 1);
+  assert.equal(payroll[0].title, 'Expired app credential on an ownerless app');
+  assert.equal(payroll[0].severity, 'high');
+  const intranet = sampleFindings.filter(item => item.subject === 'Intranet' && item.id.indexOf('apps:cred:') === 0);
+  assert.deepEqual(intranet.map(item => item.title), ['App credential expiring soon']);
+
+  assert.match(h.findingsToCsv(report), /Long-lived app credential/);
+  assert.equal(h.PERMISSIONS.length, 8);
+});
+
 test('licenses compare purchased and assigned and skip free catalogs', () => {
   const report = h.analyze(base({
     users: [
