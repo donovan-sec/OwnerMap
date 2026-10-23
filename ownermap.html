@@ -208,7 +208,7 @@
             <div id="permRequired"></div>
             <div class="permissions-title">Optional — Entra ID P1 or P2</div>
             <div id="permOptional"></div>
-            <div class="perm-note">Grant these as delegated permissions and click Grant admin consent. OwnerMap never asks for a write permission. Sign-in dates and Conditional Access are skipped, with a plain explanation, when the license or consent is missing. Tenant default settings use the same optional Policy.Read.All permission. License needs for that permission vary by tenant. The check is skipped when that consent is missing. Every other check still runs.</div>
+            <div class="perm-note">Grant these as delegated permissions and click Grant admin consent. OwnerMap never asks for a write permission. Sign-in dates and Conditional Access are skipped, with a plain explanation, when the license or consent is missing. Tenant default settings use the same optional Policy.Read.All permission. A tenant that cannot return the authorization policy shows as not checked. The check is skipped when that consent is missing. Every other check still runs.</div>
           </div>
         </div>
       </div>
@@ -758,7 +758,12 @@ function guidanceHtml(check) {
 
 function findingsHtml(check) {
   if (!check.available) return '';
-  if (!check.findings.length) return '<div class="all-clear">Nothing in this check needs action.</div>';
+  if (!check.findings.length) {
+    const clear = check.id === 'tenantDefaults'
+      ? 'No flagged defaults in this check.'
+      : 'Nothing in this check needs action.';
+    return '<div class="all-clear">' + clear + '</div>';
+  }
   const shown = check.findings.slice(0, 6);
   return '<div class="finding-list">' + shown.map(item =>
     '<article class="finding sev-' + esc(item.severity) + '"><div class="sev-pill sev-' + esc(item.severity) + '">' +

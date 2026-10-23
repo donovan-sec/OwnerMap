@@ -1688,7 +1688,8 @@
     const guestRoleSteps = [
       'Open the Microsoft Entra admin center → Identity → External Identities → External collaboration settings.',
       'Under Guest user access, choose the limited default or the option that restricts guests to properties and memberships of their own directory objects: https://learn.microsoft.com/en-us/entra/identity/users/users-restrict-guest-permissions',
-      'Same as member users is the most inclusive option. A guest who was given an admin role keeps that role: https://learn.microsoft.com/en-us/entra/external-id/external-collaboration-settings-configure'
+      'Guest users have the same access as members (most inclusive): https://learn.microsoft.com/en-us/entra/external-id/external-collaboration-settings-configure',
+      'Guest users can still be added to administrator roles regardless of this permission setting: https://learn.microsoft.com/en-us/entra/fundamentals/users-default-permissions'
     ];
     const consentSteps = [
       'Open the Microsoft Entra admin center → Identity → Applications → Enterprise apps → Consent and permissions → User consent settings.',

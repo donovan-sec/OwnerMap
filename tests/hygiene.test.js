@@ -1587,8 +1587,10 @@ test('tenant defaults add no permission and the page stays on v1.0', () => {
   assert.doesNotMatch(source, /graph\.microsoft\.com\/beta|\/beta\/policies/);
   assert.doesNotMatch(readme, /graph\.microsoft\.com\/beta/);
   assert.doesNotMatch(readme, /Read and change/i);
-  assert.match(readme, /License needs for that permission vary by tenant/);
-  assert.match(html, /License needs for that permission vary by tenant/);
+  assert.match(readme, /The check needs that consent\. A tenant that cannot return the authorization policy shows as not checked\./);
+  assert.match(html, /A tenant that cannot return the authorization policy shows as not checked\./);
+  assert.doesNotMatch(readme, /License needs for that permission vary by tenant|no licen[cs]e needed|beta endpoint/i);
+  assert.doesNotMatch(html, /License needs for that permission vary by tenant|graph\.microsoft\.com\/beta|\bbeta endpoint\b/i);
   readme.split('\n').filter(line => line.startsWith('- ')).forEach(line => {
     assert.doesNotMatch(line, /\s\|$/, line.slice(0, 80));
   });
@@ -1605,6 +1607,17 @@ test('tenant defaults add no permission and the page stays on v1.0', () => {
   assert.doesNotMatch(tenantDefaultsRow, /beta/i);
   assert.doesNotMatch(tenantDefaultsRow, /Entra ID P1/);
   assert.doesNotMatch(tenantDefaultsRow, /\b(change|update|write|fix automatically|set)\b/i);
+  const tenantBullet = readme.split('\n').find(line => line.startsWith('- **Tenant default settings**'));
+  const notChecked = readme.split('\n').find(line => line.includes('A check that says **Not checked**'));
+  [tenantDefaultsRow, tenantBullet].forEach(line => {
+    assert.match(line, /Microsoft Graph v1\.0/);
+    assert.match(line, /The check needs that consent\./);
+    assert.doesNotMatch(line, /no licen[cs]e|needs P1|\bP1\b|\bP2\b|\bbeta\b|\bfree\b/i);
+  });
+  assert.match(notChecked, /The tenant default settings check needs the optional Policy\.Read\.All consent\./);
+  assert.match(notChecked, /A tenant that cannot return the authorization policy shows as not checked\./);
+  assert.doesNotMatch(notChecked, /no licen[cs]e|needs no|needs Entra|\bP1\b|\bP2\b|\bbeta\b/i);
+  assert.doesNotMatch(readme, /\bbeta\b/i);
   assert.match(readme, /read-only/i);
   assert.match(readme, /no write access/i);
   assert.doesNotMatch(readme, /OwnerMap (has|grants|uses) write access/i);
@@ -1986,4 +1999,126 @@ test('Learn quotes and page citations stay attached to the finding they support'
   assert.match(check.explanation, /security groups/);
   assert.match(check.explanation, /default limited guest role/);
   assert.match(check.explanation, /not findings/);
+});
+
+test('the headline counts findings and is clean only when nothing is flagged', () => {
+  assert.equal(tenantCheck(authz()).headline, 'No flagged tenant defaults');
+  [
+    authz(null, { allowedToCreateApps: true }),
+    authz(null, { allowedToCreateTenants: true }),
+    authz({ allowInvitesFrom: 'everyone' }),
+    authz({ guestUserRoleId: GUEST_ROLE_MEMBER }),
+    authz(null, { permissionGrantPoliciesAssigned: ['ManagePermissionGrantsForSelf.microsoft-user-default-legacy'] })
+  ].forEach(policy => {
+    const check = tenantCheck(policy);
+    assert.equal(check.findings.length, 1);
+    assert.equal(check.headline, '1 risky default');
+    assert.doesNotMatch(check.headline, /No flagged/);
+  });
+  const all = tenantCheck(authz({
+    allowInvitesFrom: 'everyone',
+    guestUserRoleId: GUEST_ROLE_MEMBER
+  }, {
+    allowedToCreateApps: true,
+    allowedToCreateTenants: true,
+    permissionGrantPoliciesAssigned: ['ManagePermissionGrantsForSelf.microsoft-user-default-legacy']
+  }));
+  assert.equal(all.findings.length, 5);
+  assert.equal(all.headline, '5 risky defaults');
+  assert.doesNotMatch(all.headline, /No flagged/);
+  assert.equal(h.analyze(sample.build()).checks.tenantDefaults.headline, '4 risky defaults');
+});
+
+test('consent fix steps cite one Learn page each and keep the legacy clause on its page', () => {
+  const configureUserConsent = 'https://learn.microsoft.com/en-us/entra/identity/enterprise-apps/configure-user-consent';
+  const delegateAppRoles = 'https://learn.microsoft.com/en-us/entra/identity/role-based-access-control/delegate-app-roles';
+  const manageConsentPolicies = 'https://learn.microsoft.com/en-us/entra/identity/enterprise-apps/manage-app-consent-policies';
+  const quote = 'we recommend that you allow user consent only for applications that have been published by a verified publisher';
+  const steps = tenantCheck(authz(null, {
+    permissionGrantPoliciesAssigned: ['ManagePermissionGrantsForSelf.microsoft-user-default-legacy']
+  })).findings[0].steps;
+  assert.deepEqual(steps, [
+    'Open the Microsoft Entra admin center → Identity → Applications → Enterprise apps → Consent and permissions → User consent settings.',
+    configureUserConsent + ' states: "' + quote + '".',
+    delegateAppRoles + ' says to select the Do not allow user consent option. That option disables the default ability for users to consent to applications. On the configure-user-consent page, Allow user consent for apps is the legacy policy, and it applies to any application for permissions that do not require an admin.',
+    'Broad built-in policies are listed at ' + manageConsentPolicies + '. If you change the list with Microsoft Graph, keep entries that start with managePermissionGrantsForOwnedResource. An empty user-consent list means user consent is off.'
+  ]);
+  assert.equal(steps[1].includes('delegate-app-roles'), false);
+  assert.equal(steps[2].includes(configureUserConsent), false);
+  assert.equal(steps[3].includes('delegate-app-roles'), false);
+  assert.equal(steps[2].includes('Allow user consent for apps is the recommended'), false);
+});
+
+test('consent finding detail keeps each Learn sentence on its own page', () => {
+  const configureUserConsent = 'https://learn.microsoft.com/en-us/entra/identity/enterprise-apps/configure-user-consent';
+  const delegateAppRoles = 'https://learn.microsoft.com/en-us/entra/identity/role-based-access-control/delegate-app-roles';
+  const manageConsentPolicies = 'https://learn.microsoft.com/en-us/entra/identity/enterprise-apps/manage-app-consent-policies';
+  const quote = 'we recommend that you allow user consent only for applications that have been published by a verified publisher';
+  const detail = tenantCheck(authz(null, {
+    permissionGrantPoliciesAssigned: [
+      'ManagePermissionGrantsForSelf.microsoft-user-default-legacy',
+      'ManagePermissionGrantsForSelf.microsoft-all-application-permissions'
+    ]
+  })).findings[0].detail;
+  assert.ok(detail.includes(configureUserConsent + ' states: "' + quote + '".'));
+  assert.ok(detail.includes(delegateAppRoles + ' says to select the Do not allow user consent option, which disables the default ability for users to consent to applications.'));
+  assert.ok(detail.includes('An empty user-consent list means user consent is off. Policies that only cover apps the user owns are not this finding.'));
+  assert.ok(detail.includes('for any application (' + configureUserConsent + ').'));
+  assert.ok(detail.includes('(' + manageConsentPolicies + ').'));
+  detail.split(/(?<=\.)\s+/).forEach(sentence => {
+    if (sentence.includes('Do not allow user consent')) {
+      assert.match(sentence, /delegate-app-roles/);
+      assert.doesNotMatch(sentence, /configure-user-consent/);
+    }
+    if (sentence.includes('for any application (')) {
+      assert.match(sentence, /configure-user-consent/);
+      assert.doesNotMatch(sentence, /delegate-app-roles/);
+    }
+  });
+});
+
+test('a quiet tenant-defaults check is not told that action is required', () => {
+  const html = fs.readFileSync(path.join(__dirname, '..', 'ownermap.html'), 'utf8');
+  assert.match(html, /check\.id === 'tenantDefaults'\s*\?\s*'No flagged defaults in this check\.'\s*:\s*'Nothing in this check needs action\.'/);
+  assert.equal(tenantCheck(authz()).headline, 'No flagged tenant defaults');
+  assert.equal(tenantCheck(authz()).findings.length, 0);
+});
+
+test('the guest admin-role step cites the page that states it', () => {
+  const finding = tenantCheck(authz({ guestUserRoleId: GUEST_ROLE_MEMBER })).findings.find(item => item.id === 'td:guest-role');
+  const step = finding.steps.find(item => item.includes('administrator roles'));
+  assert.equal(step, 'Guest users can still be added to administrator roles regardless of this permission setting: https://learn.microsoft.com/en-us/entra/fundamentals/users-default-permissions');
+  assert.equal(step.includes('external-collaboration-settings-configure'), false);
+});
+
+test('duplicate consent ids stay in first-seen order and are written once', () => {
+  const broad = 'ManagePermissionGrantsForSelf.microsoft-all-application-permissions';
+  const duplicated = tenantCheck(authz(null, {
+    permissionGrantPoliciesAssigned: [broad, broad.toLowerCase(), broad]
+  }));
+  const finding = duplicated.findings[0];
+  assert.equal(finding.detail.split('all application permissions for any app').length - 1, 1);
+  assert.equal(
+    duplicated.rows.find(row => row.setting === 'User consent to apps').value,
+    'all application permissions for any app'
+  );
+  const safe = tenantCheck(authz(null, {
+    permissionGrantPoliciesAssigned: [
+      'ManagePermissionGrantsForSelf.microsoft-user-default-low',
+      'ManagePermissionGrantsForSelf.microsoft-user-default-recommended',
+      'managePermissionGrantsForSelf.microsoft-user-default-recommended'
+    ]
+  }));
+  assert.equal(safe.findings.length, 0);
+  assert.equal(
+    safe.rows.find(row => row.setting === 'User consent to apps').value,
+    "verified publishers and selected permissions; Microsoft's managed recommendation"
+  );
+  const two = tenantCheck(authz(null, {
+    permissionGrantPoliciesAssigned: [
+      'ManagePermissionGrantsForSelf.microsoft-all-application-permissions',
+      'ManagePermissionGrantsForSelf.microsoft-application-admin'
+    ]
+  }));
+  assert.ok(two.findings[0].detail.includes('Assigned user consent includes all application permissions for any app; the application administrator consent policy ('));
 });
