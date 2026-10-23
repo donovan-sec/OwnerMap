@@ -1072,14 +1072,14 @@ test('severity rollup ignores unavailable checks and sorts findings', () => {
     conditionalAccess: { available: false, reason: 'permission', message: h.unavailableMessage('conditionalAccess', 'permission') }
   }));
   assert.equal(report.counts.high, 0);
-  assert.deepEqual(report.unavailable.sort(), ['conditionalAccess', 'staleAccounts']);
+  assert.deepEqual(report.unavailable.sort(), ['conditionalAccess', 'staleAccounts', 'tenantDefaults']);
   assert.equal(report.checks.staleAccounts.findings.length, 0);
 });
 
 test('sample tenant produces a stable mixed report', () => {
   const report = h.analyze(sample.build());
   assert.equal(report.generatedAt, NOW);
-  assert.deepEqual(report.counts, { high: 15, medium: 8, low: 1 });
+  assert.deepEqual(report.counts, { high: 18, medium: 9, low: 1 });
   assert.deepEqual(report.checks.groups.counts, { high: 2, medium: 0, low: 1 });
   assert.equal(report.checks.groups.headline, '2 groups have no owner, and 1 enabled account is not in a group');
   assert.deepEqual(report.checks.staleAccounts.counts, { high: 3, medium: 0, low: 0 });
@@ -1088,6 +1088,7 @@ test('sample tenant produces a stable mixed report', () => {
   assert.deepEqual(report.checks.applications.counts, { high: 4, medium: 3, low: 0 });
   assert.deepEqual(report.checks.licenses.counts, { high: 1, medium: 2, low: 0 });
   assert.deepEqual(report.checks.conditionalAccess.counts, { high: 2, medium: 2, low: 0 });
+  assert.deepEqual(report.checks.tenantDefaults.counts, { high: 3, medium: 1, low: 0 });
   report.order.forEach(id => {
     const check = report.checks[id];
     assert.ok(check.explanation.length > 40, id);
@@ -1145,4 +1146,979 @@ test('page asks only for the catalog scopes', () => {
   assert.match(html, /cacheLocation:\s*'memory'/);
   assert.match(html, /graph\.microsoft\.com/);
   assert.match(html, /integrity="sha384-/);
+});
+
+const GUEST_ROLE_MEMBER = 'a0b1b346-4d3e-4e8b-98f8-753987be4970';
+const GUEST_ROLE_GUEST = '10dae51f-b6af-4016-8d66-8c2a99b929b3';
+const GUEST_ROLE_RESTRICTED = '2af84b1e-32c8-42b7-82bc-daa82404023b';
+const FINDING_KEYS = ['checkId', 'detail', 'id', 'severity', 'steps', 'subject', 'subjectId', 'title'];
+
+function perms(overrides) {
+  return Object.assign({
+    allowedToCreateApps: false,
+    allowedToCreateTenants: false,
+    allowedToCreateSecurityGroups: true,
+    allowedToReadOtherUsers: false,
+    permissionGrantPoliciesAssigned: ['ManagePermissionGrantsForSelf.microsoft-user-default-low']
+  }, overrides);
+}
+
+function authz(policyOverrides, permOverrides) {
+  const policy = Object.assign({
+    id: 'authorizationPolicy',
+    allowInvitesFrom: 'adminsAndGuestInviters',
+    guestUserRoleId: GUEST_ROLE_RESTRICTED,
+    unknownDirectorySetting: true,
+    defaultUserRolePermissions: perms(permOverrides)
+  }, policyOverrides || {});
+  if (policyOverrides && Object.prototype.hasOwnProperty.call(policyOverrides, 'defaultUserRolePermissions')) {
+    policy.defaultUserRolePermissions = policyOverrides.defaultUserRolePermissions;
+  }
+  return { available: true, reason: 'ok', policy };
+}
+
+function tenantCheck(authorizationPolicy) {
+  return h.analyze(base({ authorizationPolicy })).checks.tenantDefaults;
+}
+
+function byId(check) {
+  return Object.fromEntries(check.findings.map(item => [item.id, item]));
+}
+
+function assertFindingShape(item) {
+  assert.deepEqual(Object.keys(item).sort(), FINDING_KEYS);
+  assert.equal(item.checkId, 'tenantDefaults');
+  assert.equal(item.subject, 'Tenant defaults');
+  assert.ok(item.steps.length >= 3);
+  item.steps.forEach(step => assert.doesNotMatch(step, /PATCH|ReadWrite|\/beta|allowedToReadOtherUsers/i));
+}
+
+test('tenant defaults stay quiet when the documented safe values are set', () => {
+  const check = tenantCheck(authz());
+  assert.equal(check.available, true);
+  assert.equal(check.status, 'ok');
+  assert.equal(check.findings.length, 0);
+  assert.equal(check.headline, 'No flagged tenant defaults');
+  assert.equal(check.note, '');
+  assert.deepEqual(check.counts, { high: 0, medium: 0, low: 0 });
+  const groups = check.rows.find(row => row.setting === 'Users can create security groups');
+  assert.equal(groups.value, 'Any member');
+  assert.equal(groups.severity, 'ok');
+  assert.equal(check.findings.some(item => /security group/i.test(item.title)), false);
+  const report = h.analyze(base({ authorizationPolicy: authz() }));
+  assert.equal(report.unavailable.includes('tenantDefaults'), false);
+  assert.equal(report.order[report.order.length - 1], 'tenantDefaults');
+});
+
+test('each tenant-default finding turns on and off', () => {
+  const risky = tenantCheck(authz({
+    allowInvitesFrom: 'everyone',
+    guestUserRoleId: GUEST_ROLE_MEMBER
+  }, {
+    allowedToCreateApps: true,
+    allowedToCreateTenants: true,
+    allowedToCreateSecurityGroups: true,
+    allowedToReadOtherUsers: false,
+    permissionGrantPoliciesAssigned: [
+      'ManagePermissionGrantsForSelf.microsoft-user-default-legacy',
+      'ManagePermissionGrantsForSelf.microsoft-user-default-legacy',
+      'managePermissionGrantsForSelf.microsoft-all-application-permissions',
+      'ManagePermissionGrantsForOwnedResource.microsoft-dynamically-managed-permissions-for-team',
+      'ManagePermissionGrantsForOwnedResource.microsoft-dynamically-managed-permissions-for-chat',
+      'ManagePermissionGrantsForSelf.microsoft-user-default-low'
+    ]
+  }));
+  const found = byId(risky);
+  assert.deepEqual(Object.keys(found).sort(), [
+    'td:create-apps',
+    'td:create-tenants',
+    'td:guest-invites',
+    'td:guest-role',
+    'td:user-consent'
+  ]);
+  assert.equal(risky.findings.length, 5);
+  risky.findings.forEach(assertFindingShape);
+  assert.equal(found['td:create-apps'].severity, 'medium');
+  assert.equal(found['td:create-apps'].title, 'Users can register applications');
+  assert.match(found['td:create-apps'].detail, /Application Developer/);
+  assert.equal(found['td:create-tenants'].severity, 'high');
+  assert.equal(found['td:create-tenants'].title, 'Users can create tenants');
+  assert.match(found['td:create-tenants'].detail, /Global Administrator/);
+  assert.match(found['td:create-tenants'].detail, /Restrict non-admin users from creating tenants/);
+  assert.equal(found['td:guest-invites'].severity, 'high');
+  assert.equal(found['td:guest-invites'].title, 'Anyone, including guests, can invite guests');
+  assert.equal(found['td:guest-role'].severity, 'high');
+  assert.equal(found['td:guest-role'].title, 'Guests have the same access as members');
+  assert.equal(found['td:user-consent'].severity, 'high');
+  assert.equal(found['td:user-consent'].title, 'Users can grant broad application consent');
+  assert.match(found['td:user-consent'].detail, /legacy policy/);
+  assert.match(found['td:user-consent'].detail, /all application permissions for any app/);
+  assert.doesNotMatch(found['td:user-consent'].detail, /verified publishers and selected permissions/);
+  assert.equal(risky.findings.some(item => /security group/i.test(item.title)), false);
+  assert.doesNotMatch(JSON.stringify(risky.findings), /allowedToReadOtherUsers|\/beta/i);
+  risky.findings.forEach(item => assert.equal(item.subjectId, 'authorizationPolicy'));
+  assert.doesNotMatch(found['td:create-apps'].detail, /Microsoft recommends/);
+  assert.match(found['td:create-apps'].detail, /OwnerMap rates this medium/);
+  assert.match(found['td:create-apps'].detail, /delegate-app-roles/);
+  assert.match(found['td:create-tenants'].detail, /OwnerMap rates this high/);
+  assert.match(found['td:create-tenants'].detail, /zero-trust-protect-tenants/);
+  assert.doesNotMatch(found['td:guest-invites'].detail, /Microsoft warns|compromised guest/);
+  assert.match(found['td:guest-invites'].detail, /entitlement-management-external-users/);
+  assert.match(found['td:guest-invites'].detail, /including guests themselves/);
+  assert.match(found['td:guest-invites'].detail, /OwnerMap rates this high/);
+  assert.match(found['td:guest-role'].detail, /OwnerMap rates this high/);
+  assert.match(found['td:guest-role'].detail, /users-restrict-guest-permissions/);
+  assert.match(found['td:user-consent'].detail, /configure-user-consent/);
+  assert.match(found['td:user-consent'].detail, /OwnerMap rates this high/);
+  assert.doesNotMatch(found['td:user-consent'].detail, /turning user consent off/);
+
+  const appsOff = tenantCheck(authz(null, { allowedToCreateApps: false }));
+  assert.equal(appsOff.findings.some(item => item.id === 'td:create-apps'), false);
+  assert.equal(appsOff.rows.find(row => row.setting === 'Users can register applications').severity, 'ok');
+
+  const tenantsOff = tenantCheck(authz(null, { allowedToCreateTenants: false }));
+  assert.equal(tenantsOff.findings.some(item => item.id === 'td:create-tenants'), false);
+  assert.equal(tenantsOff.rows.find(row => row.setting === 'Users can create tenants').value, 'Tenant Creator role');
+
+  const groupsOff = tenantCheck(authz(null, { allowedToCreateSecurityGroups: false }));
+  assert.equal(groupsOff.findings.length, 0);
+  assert.equal(groupsOff.rows.find(row => row.setting === 'Users can create security groups').value, 'User Administrator and above');
+});
+
+test('every allowInvitesFrom value is judged on its own', () => {
+  function invites(value) {
+    return tenantCheck(authz({ allowInvitesFrom: value }));
+  }
+  const everyone = invites('everyone');
+  const everyoneFinding = everyone.findings.find(item => item.id === 'td:guest-invites');
+  assert.equal(everyoneFinding.severity, 'high');
+  assert.equal(everyoneFinding.title, 'Anyone, including guests, can invite guests');
+  assert.match(everyoneFinding.detail, /including guests themselves/);
+  assert.equal(invites('EVERYONE').findings.find(item => item.id === 'td:guest-invites').title, everyoneFinding.title);
+
+  const members = invites('adminsGuestInvitersAndAllMembers');
+  assert.equal(members.findings.some(item => item.id === 'td:guest-invites'), false);
+  assert.equal(members.rows.find(row => row.setting === 'Who can invite guests').value, 'Members and guest-inviter admins');
+  assert.equal(members.rows.find(row => row.setting === 'Who can invite guests').severity, 'ok');
+  assert.equal(invites('  adminsGuestInvitersAndAllMembers  ').findings.some(item => item.id === 'td:guest-invites'), false);
+
+  ['adminsAndGuestInviters', 'none'].forEach(value => {
+    const check = invites(value);
+    assert.equal(check.findings.some(item => item.id === 'td:guest-invites'), false, value);
+    assert.equal(check.rows.find(row => row.setting === 'Who can invite guests').severity, 'ok', value);
+  });
+  const unknown = invites('guestsOnly');
+  assert.equal(unknown.findings.some(item => item.id === 'td:guest-invites'), false);
+  assert.equal(unknown.rows.find(row => row.setting === 'Who can invite guests').severity, 'unavailable');
+  assert.match(unknown.note, /who can invite guests/);
+});
+
+test('every guestUserRoleId value is judged on its own', () => {
+  function role(value) {
+    return tenantCheck(authz({ guestUserRoleId: value }));
+  }
+  const member = role(GUEST_ROLE_MEMBER);
+  const memberFinding = member.findings.find(item => item.id === 'td:guest-role');
+  assert.equal(memberFinding.severity, 'high');
+  assert.equal(memberFinding.title, 'Guests have the same access as members');
+  assert.equal(role(GUEST_ROLE_MEMBER.toUpperCase()).findings.find(item => item.id === 'td:guest-role').severity, 'high');
+
+  const guest = role(GUEST_ROLE_GUEST);
+  assert.equal(guest.findings.some(item => item.id === 'td:guest-role'), false);
+  assert.equal(guest.rows.find(row => row.setting === 'Guest directory access').value, 'Default limited guest');
+  assert.equal(guest.rows.find(row => row.setting === 'Guest directory access').severity, 'ok');
+  assert.equal(role('  ' + GUEST_ROLE_GUEST.toUpperCase() + '  ').findings.some(item => item.id === 'td:guest-role'), false);
+
+  const restricted = role(GUEST_ROLE_RESTRICTED);
+  assert.equal(restricted.findings.some(item => item.id === 'td:guest-role'), false);
+  assert.equal(restricted.rows.find(row => row.setting === 'Guest directory access').value, 'Own profile only');
+  assert.equal(restricted.rows.find(row => row.setting === 'Guest directory access').severity, 'ok');
+
+  const unknown = role('00000000-0000-0000-0000-000000000000');
+  assert.equal(unknown.findings.some(item => item.id === 'td:guest-role'), false);
+  assert.equal(unknown.rows.find(row => row.setting === 'Guest directory access').severity, 'unavailable');
+  assert.match(unknown.note, /guest directory access/);
+});
+
+test('user consent policies are flagged only when they are broad or legacy', () => {
+  function consent(list) {
+    return tenantCheck(authz(null, { permissionGrantPoliciesAssigned: list }));
+  }
+  function consentFinding(list) {
+    const findings = consent(list).findings.filter(item => item.id === 'td:user-consent');
+    assert.equal(findings.length <= 1, true);
+    return findings[0] || null;
+  }
+
+  assert.equal(consentFinding([]), null);
+  assert.equal(consent([]).rows.find(row => row.setting === 'User consent to apps').value, 'Off');
+  assert.equal(consent([]).rows.find(row => row.setting === 'User consent to apps').severity, 'ok');
+
+  [
+    ['ManagePermissionGrantsForSelf.microsoft-user-default-low'],
+    ['managePermissionGrantsForSelf.microsoft-user-default-recommended'],
+    ['ManagePermissionGrantsForSelf.microsoft-user-default-allow-consent-apps'],
+    ['ManagePermissionGrantsForSelf.microsoft-user-allow-default-consent-apps'],
+    [
+      'ManagePermissionGrantsForSelf.microsoft-user-default-recommended',
+      'ManagePermissionGrantsForSelf.microsoft-user-default-allow-consent-apps',
+      'ManagePermissionGrantsForOwnedResource.microsoft-dynamically-managed-permissions-for-chat'
+    ]
+  ].forEach(list => {
+    assert.equal(consentFinding(list), null, list.join(','));
+    assert.equal(consent(list).rows.find(row => row.setting === 'User consent to apps').severity, 'ok', list.join(','));
+  });
+
+  assert.equal(consentFinding([
+    'ManagePermissionGrantsForOwnedResource.microsoft-dynamically-managed-permissions-for-team'
+  ]), null);
+  assert.equal(consent([
+    'ManagePermissionGrantsForOwnedResource.microsoft-dynamically-managed-permissions-for-team'
+  ]).rows.find(row => row.setting === 'User consent to apps').value, 'Off');
+
+  const legacy = consentFinding(['ManagePermissionGrantsForSelf.microsoft-user-default-legacy']);
+  assert.equal(legacy.severity, 'high');
+  assert.equal(legacy.title, 'Users can consent to any app');
+  assert.match(legacy.detail, /any app/);
+  assert.match(legacy.detail, /we recommend that you allow user consent only for applications that have been published by a verified publisher/);
+  assert.equal(consentFinding([
+    'managepermissiongrantsforself.microsoft-user-default-legacy',
+    'ManagePermissionGrantsForSelf.microsoft-user-default-low'
+  ]).title, 'Users can consent to any app');
+
+  [
+    ['microsoft-all-application-permissions', /all application permissions for any app/],
+    ['microsoft-all-application-permissions-verified', /verified publishers and apps registered in this tenant/],
+    ['microsoft-application-admin', /application administrator consent policy/],
+    ['microsoft-company-admin', /company administrator consent policy/]
+  ].forEach(pair => {
+    const item = consentFinding(['ManagePermissionGrantsForSelf.' + pair[0]]);
+    assert.equal(item.severity, 'high', pair[0]);
+    assert.equal(item.title, 'Users can grant broad application consent', pair[0]);
+    assert.match(item.detail, pair[1], pair[0]);
+    assert.doesNotMatch(item.detail, /legacy policy/, pair[0]);
+  });
+
+  const custom = consent(['ManagePermissionGrantsForSelf.my-custom-policy']);
+  assert.equal(custom.findings.some(item => item.id === 'td:user-consent'), false);
+  assert.equal(custom.rows.find(row => row.setting === 'User consent to apps').severity, 'unavailable');
+  assert.match(custom.note, /does not recognize/);
+  assert.equal(custom.headline, 'No risky default in the settings Microsoft returned');
+
+  const mixed = consentFinding([
+    'ManagePermissionGrantsForSelf.my-custom-policy',
+    'ManagePermissionGrantsForSelf.microsoft-user-default-legacy'
+  ]);
+  assert.equal(mixed.title, 'Users can consent to any app');
+  assert.match(mixed.detail, /microsoft-user-default-legacy|legacy policy/);
+  assert.doesNotMatch(mixed.detail, /my-custom-policy/);
+
+  const junk = consent(['not-a-policy']);
+  assert.equal(junk.findings.some(item => item.id === 'td:user-consent'), false);
+  assert.equal(junk.rows.find(row => row.setting === 'User consent to apps').severity, 'unavailable');
+});
+
+test('missing and null authorization-policy properties are not safe or risky', () => {
+  const emptyPerms = tenantCheck(authz({
+    allowInvitesFrom: null,
+    guestUserRoleId: null,
+    defaultUserRolePermissions: {
+      allowedToCreateApps: null,
+      allowedToCreateTenants: null,
+      allowedToCreateSecurityGroups: null,
+      permissionGrantPoliciesAssigned: null,
+      allowedToReadOtherUsers: null
+    }
+  }));
+  assert.equal(emptyPerms.available, true);
+  assert.equal(emptyPerms.findings.length, 0);
+  assert.notEqual(emptyPerms.headline, 'No flagged tenant defaults');
+  assert.match(emptyPerms.note, /not judged/);
+  emptyPerms.rows.forEach(row => assert.equal(row.severity, 'unavailable', row.setting));
+  ['who can register applications', 'who can create tenants', 'who can create security groups', 'who can invite guests', 'guest directory access', 'user consent'].forEach(label => {
+    assert.match(emptyPerms.note, new RegExp(label));
+  });
+
+  const omittedCheck = tenantCheck(authz({
+    allowInvitesFrom: undefined,
+    guestUserRoleId: undefined,
+    defaultUserRolePermissions: {}
+  }));
+  assert.equal(omittedCheck.findings.length, 0);
+  assert.match(omittedCheck.note, /who can register applications/);
+  assert.match(omittedCheck.note, /user consent/);
+
+  const sibling = tenantCheck(authz({
+    allowInvitesFrom: null,
+    guestUserRoleId: GUEST_ROLE_RESTRICTED,
+    defaultUserRolePermissions: {
+      allowedToCreateApps: null,
+      allowedToCreateTenants: true,
+      allowedToCreateSecurityGroups: null,
+      permissionGrantPoliciesAssigned: []
+    }
+  }));
+  assert.deepEqual(sibling.findings.map(item => item.id), ['td:create-tenants']);
+  assert.equal(sibling.rows.find(row => row.setting === 'Users can register applications').severity, 'unavailable');
+  assert.equal(sibling.rows.find(row => row.setting === 'Users can create security groups').severity, 'unavailable');
+  assert.equal(sibling.rows.find(row => row.setting === 'Who can invite guests').severity, 'unavailable');
+  assert.equal(sibling.rows.find(row => row.setting === 'User consent to apps').severity, 'ok');
+  assert.equal(sibling.findings.some(item => item.id === 'td:create-apps'), false);
+
+  const noPerms = tenantCheck(authz({ defaultUserRolePermissions: null }));
+  assert.equal(noPerms.findings.length, 0);
+  assert.match(noPerms.note, /who can register applications/);
+  assert.match(noPerms.note, /user consent/);
+  assert.equal(noPerms.rows.find(row => row.setting === 'Guest directory access').severity, 'ok');
+
+  const textValues = tenantCheck(authz(null, {
+    allowedToCreateApps: 'true',
+    allowedToCreateTenants: 'false',
+    allowedToCreateSecurityGroups: 'true',
+    permissionGrantPoliciesAssigned: 'ManagePermissionGrantsForSelf.microsoft-user-default-legacy'
+  }));
+  assert.equal(textValues.findings.length, 0);
+  assert.equal(textValues.rows.find(row => row.setting === 'Users can register applications').severity, 'unavailable');
+  assert.equal(textValues.rows.find(row => row.setting === 'Users can create tenants').severity, 'unavailable');
+  assert.equal(textValues.rows.find(row => row.setting === 'Users can create security groups').severity, 'unavailable');
+  assert.equal(textValues.rows.find(row => row.setting === 'User consent to apps').severity, 'unavailable');
+  assert.match(textValues.note, /not judged/);
+});
+
+test('an unreadable authorization policy is not a clean bill of health', () => {
+  function fromError(error) {
+    const interpreted = h.interpretOptionalError('tenantDefaults', error);
+    const report = h.analyze(base({
+      groups: [{ id: 'g', displayName: 'Finance', securityEnabled: true, owners: [], members: [] }],
+      authorizationPolicy: interpreted
+    }));
+    const check = report.checks.tenantDefaults;
+    assert.equal(interpreted.available, false);
+    assert.equal(check.available, false);
+    assert.equal(check.status, 'unavailable');
+    assert.equal(check.findings.length, 0);
+    assert.deepEqual(check.counts, { high: 0, medium: 0, low: 0 });
+    assert.equal(check.headline, 'Tenant defaults unavailable');
+    assert.match(check.unavailableMessage, /Policy\.Read\.All/);
+    assert.match(check.unavailableMessage, /Every other check still ran/);
+    assert.doesNotMatch(check.unavailableMessage, /tightened|no risky/i);
+    assert.ok(report.unavailable.includes('tenantDefaults'));
+    assert.equal(report.checks.groups.counts.high, 1);
+    assert.ok(report.counts.high >= 1);
+    return { interpreted, check, report };
+  }
+
+  const denied = fromError({
+    status: 403,
+    code: 'Authorization_RequestDenied',
+    graphMessage: 'Insufficient privileges to complete the operation.'
+  });
+  assert.equal(denied.interpreted.reason, 'permission');
+  assert.match(denied.check.unavailableMessage, /Grant admin consent/);
+
+  const unauthorized = fromError({ status: 401, code: '', graphMessage: 'Access token has expired.' });
+  assert.equal(unauthorized.interpreted.reason, 'permission');
+  assert.match(unauthorized.check.unavailableMessage, /Policy\.Read\.All/);
+
+  const licensed = fromError({
+    status: 403,
+    code: 'Authentication_RequestFromNonPremiumTenantOrB2CTenant',
+    graphMessage: "Neither tenant is B2C or tenant doesn't have premium license"
+  });
+  assert.equal(licensed.interpreted.reason, 'license');
+  assert.match(licensed.check.unavailableMessage, /license or subscription/);
+  assert.match(licensed.check.unavailableMessage, /Policy\.Read\.All/);
+
+  const subscription = fromError({ status: 400, code: '', graphMessage: 'Subscription not found' });
+  assert.equal(subscription.interpreted.reason, 'license');
+
+  const generic = fromError({ status: 500, code: 'UnknownError', graphMessage: 'Something went wrong.' });
+  assert.equal(generic.interpreted.reason, 'error');
+  assert.match(generic.check.unavailableMessage, /did not return the authorization policy/);
+  assert.match(generic.check.unavailableMessage, /Every other check still ran/);
+
+  const bare = h.analyze(base());
+  assert.equal(bare.checks.tenantDefaults.available, false);
+  assert.equal(bare.checks.tenantDefaults.findings.length, 0);
+  assert.equal(bare.checks.tenantDefaults.status, 'unavailable');
+  assert.ok(bare.unavailable.includes('tenantDefaults'));
+  assert.match(bare.checks.tenantDefaults.unavailableMessage, /Policy\.Read\.All/);
+
+  const nullPolicy = tenantCheck({ available: true, reason: 'ok', policy: null });
+  assert.equal(nullPolicy.available, false);
+  assert.equal(nullPolicy.status, 'unavailable');
+  assert.equal(nullPolicy.findings.length, 0);
+  assert.match(nullPolicy.unavailableMessage, /Policy\.Read\.All/);
+  assert.match(nullPolicy.unavailableMessage, /Every other check still ran/);
+});
+
+test('tenant defaults add no permission and the page stays on v1.0', () => {
+  assert.equal(h.PERMISSIONS.length, 8);
+  assert.deepEqual(h.PERMISSIONS.map(permission => permission.scope), [
+    'User.Read',
+    'Group.Read.All',
+    'GroupMember.Read.All',
+    'User.Read.All',
+    'Directory.Read.All',
+    'Application.Read.All',
+    'AuditLog.Read.All',
+    'Policy.Read.All'
+  ]);
+  h.PERMISSIONS.forEach(permission => {
+    assert.equal(permission.type, 'Delegated');
+    assert.doesNotMatch(permission.scope, /Write/i);
+  });
+  const policyPerm = h.PERMISSIONS.find(permission => permission.scope === 'Policy.Read.All');
+  assert.equal(policyPerm.required, false);
+  assert.equal(policyPerm.purpose, 'Read Conditional Access policies and security defaults');
+
+  const root = path.join(__dirname, '..');
+  const readme = fs.readFileSync(path.join(root, 'README.md'), 'utf8');
+  const html = fs.readFileSync(path.join(root, 'ownermap.html'), 'utf8');
+  const source = fs.readFileSync(path.join(root, 'src', 'hygiene.js'), 'utf8');
+  assert.match(readme, /Tenant defaults/);
+  assert.match(readme, /optional `Policy\.Read\.All`/);
+  assert.match(readme, /tenant default settings/);
+  assert.match(html, /Tenant default settings use the same optional Policy\.Read\.All permission/);
+  assert.match(html, /graphGet\(GRAPH \+ '\/policies\/authorizationPolicy', appState\.tokens\.policy\)/);
+  assert.match(html, /interpretOptionalError\('tenantDefaults', error\)/);
+  assert.match(html, /unavailableMessage\('tenantDefaults', 'permission'\)/);
+  assert.doesNotMatch(html, /graph\.microsoft\.com\/beta/);
+  assert.doesNotMatch(source, /graph\.microsoft\.com\/beta|\/beta\/policies/);
+  assert.doesNotMatch(readme, /graph\.microsoft\.com\/beta/);
+  assert.doesNotMatch(readme, /Read and change/i);
+  assert.match(readme, /The check needs that consent\. A tenant that cannot return the authorization policy shows as not checked\./);
+  assert.match(html, /A tenant that cannot return the authorization policy shows as not checked\./);
+  assert.doesNotMatch(readme, /License needs for that permission vary by tenant|no licen[cs]e needed|beta endpoint/i);
+  assert.doesNotMatch(html, /License needs for that permission vary by tenant|graph\.microsoft\.com\/beta|\bbeta endpoint\b/i);
+  readme.split('\n').filter(line => line.startsWith('- ')).forEach(line => {
+    assert.doesNotMatch(line, /\s\|$/, line.slice(0, 80));
+  });
+  h.PERMISSIONS.forEach(permission => {
+    const line = readme.split('\n').find(row => row.startsWith('| `' + permission.scope + '`'));
+    assert.ok(line, permission.scope);
+    assert.ok(line.replace(/`/g, '').includes(permission.purpose), permission.scope);
+    assert.ok(line.includes(permission.license), permission.scope);
+    assert.doesNotMatch(line, /Read and change/i);
+  });
+  const tenantDefaultsRow = readme.split('\n').find(line => line.startsWith('| Tenant defaults'));
+  assert.match(tenantDefaultsRow, /Microsoft Graph v1\.0/);
+  assert.match(tenantDefaultsRow, /Policy\.Read\.All/);
+  assert.doesNotMatch(tenantDefaultsRow, /beta/i);
+  assert.doesNotMatch(tenantDefaultsRow, /Entra ID P1/);
+  assert.doesNotMatch(tenantDefaultsRow, /\b(change|update|write|fix automatically|set)\b/i);
+  const tenantBullet = readme.split('\n').find(line => line.startsWith('- **Tenant default settings**'));
+  const notChecked = readme.split('\n').find(line => line.includes('A check that says **Not checked**'));
+  [tenantDefaultsRow, tenantBullet].forEach(line => {
+    assert.match(line, /Microsoft Graph v1\.0/);
+    assert.match(line, /The check needs that consent\./);
+    assert.doesNotMatch(line, /no licen[cs]e|needs P1|\bP1\b|\bP2\b|\bbeta\b|\bfree\b/i);
+  });
+  assert.match(notChecked, /The tenant default settings check needs the optional Policy\.Read\.All consent\./);
+  assert.match(notChecked, /A tenant that cannot return the authorization policy shows as not checked\./);
+  assert.doesNotMatch(notChecked, /no licen[cs]e|needs no|needs Entra|\bP1\b|\bP2\b|\bbeta\b/i);
+  assert.doesNotMatch(readme, /\bbeta\b/i);
+  assert.match(readme, /read-only/i);
+  assert.match(readme, /no write access/i);
+  assert.doesNotMatch(readme, /OwnerMap (has|grants|uses) write access/i);
+  assert.doesNotMatch(readme, /does not need Entra ID P1|do not need Entra ID P1|no P1 is needed/i);
+  assert.match(readme, /Tenant default settings/);
+  assert.match(readme, /Entra ID P1 or P2/);
+
+  const sampleReport = h.analyze(sample.build());
+  const sampleCheck = sampleReport.checks.tenantDefaults;
+  const samplePolicy = sample.build().authorizationPolicy.policy;
+  assert.equal(samplePolicy.defaultUserRolePermissions.allowedToCreateSecurityGroups, true);
+  assert.equal(samplePolicy.guestUserRoleId, GUEST_ROLE_GUEST);
+  assert.ok(samplePolicy.defaultUserRolePermissions.permissionGrantPoliciesAssigned.includes('ManagePermissionGrantsForSelf.microsoft-user-default-low'));
+  assert.deepEqual(sampleCheck.findings.map(item => item.id).sort(), [
+    'td:create-apps',
+    'td:create-tenants',
+    'td:guest-invites',
+    'td:user-consent'
+  ]);
+  assert.equal(sampleCheck.findings.find(item => item.id === 'td:user-consent').title, 'Users can consent to any app');
+  assert.equal(sampleCheck.findings.filter(item => item.id === 'td:user-consent').length, 1);
+  assert.equal(sampleCheck.findings.some(item => item.id === 'td:guest-role'), false);
+  assert.equal(sampleCheck.findings.some(item => /security group/i.test(item.title)), false);
+  const sampleGroups = sampleCheck.rows.find(row => row.setting === 'Users can create security groups');
+  assert.equal(sampleGroups.value, 'Any member');
+  assert.equal(sampleGroups.severity, 'ok');
+  const sampleGuest = sampleCheck.rows.find(row => row.setting === 'Guest directory access');
+  assert.equal(sampleGuest.value, 'Default limited guest');
+  assert.equal(sampleGuest.severity, 'ok');
+  const sampleCsv = h.checkToCsv(sampleCheck);
+  assert.match(sampleCsv, /Users can create security groups/);
+  assert.match(sampleCsv, /Any member/);
+  assert.match(html, /row\[column\.key\]/);
+
+  const analyzeAt = html.indexOf('const report = OwnerMapHygiene.analyze(');
+  assert.ok(analyzeAt >= 0);
+  const analyzeEnd = html.indexOf('});', analyzeAt);
+  assert.ok(analyzeEnd > analyzeAt);
+  const analyzeCall = html.slice(analyzeAt, analyzeEnd);
+  assert.match(analyzeCall, /\bauthorizationPolicy\b/);
+});
+
+test('invite values are trimmed before they are compared', () => {
+  function invites(value) {
+    return tenantCheck(authz({ allowInvitesFrom: value }));
+  }
+  ['  everyone  ', '\teveryone\n', ' EVERYONE '].forEach(value => {
+    const check = invites(value);
+    const finding = check.findings.find(item => item.id === 'td:guest-invites');
+    assert.ok(finding, JSON.stringify(value));
+    assert.equal(finding.title, 'Anyone, including guests, can invite guests');
+    assert.equal(check.findings.filter(item => item.id === 'td:guest-invites').length, 1);
+  });
+  ['  adminsAndGuestInviters  ', '\tnone\n'].forEach(value => {
+    const check = invites(value);
+    assert.equal(check.findings.some(item => item.id === 'td:guest-invites'), false, JSON.stringify(value));
+    assert.equal(check.rows.find(row => row.setting === 'Who can invite guests').severity, 'ok', JSON.stringify(value));
+  });
+  const members = invites(' \tadminsGuestInvitersAndAllMembers \n');
+  assert.equal(members.findings.some(item => item.id === 'td:guest-invites'), false);
+  assert.equal(members.rows.find(row => row.setting === 'Who can invite guests').value, 'Members and guest-inviter admins');
+  assert.equal(members.rows.find(row => row.setting === 'Who can invite guests').severity, 'ok');
+});
+
+test('consent policy ids match the whole id after an anchored prefix', () => {
+  function consent(list) {
+    return tenantCheck(authz(null, { permissionGrantPoliciesAssigned: list }));
+  }
+  function consentFindings(list) {
+    return consent(list).findings.filter(item => item.id === 'td:user-consent');
+  }
+
+  [
+    'ManagePermissionGrantsForSelf.microsoft-user-default-legacy-extra',
+    'ManagePermissionGrantsForSelf.microsoft-user-default-legacy2',
+    'ManagePermissionGrantsForSelf.notmicrosoft-user-default-legacy',
+    'notmicrosoft-user-default-legacy',
+    'microsoft-user-default-legacy',
+    'xmanagePermissionGrantsForSelf.microsoft-user-default-legacy',
+    'prefix-managePermissionGrantsForSelf.microsoft-user-default-legacy',
+    'managePermissionGrantsForSelf.microsoft-user-default-legacy.more'
+  ].forEach(entry => {
+    const check = consent([entry]);
+    assert.equal(consentFindings([entry]).length, 0, entry);
+    assert.equal(check.rows.find(row => row.setting === 'User consent to apps').severity, 'unavailable', entry);
+  });
+
+  [
+    'ManagePermissionGrantsForSelf.Microsoft-User-Default-Legacy',
+    'managePermissionGrantsForSelf.MICROSOFT-USER-DEFAULT-LEGACY',
+    '  ManagePermissionGrantsForSelf.microsoft-user-default-legacy  '
+  ].forEach(entry => {
+    const findings = consentFindings([entry]);
+    assert.equal(findings.length, 1, entry);
+    assert.equal(findings[0].title, 'Users can consent to any app', entry);
+    assert.match(findings[0].detail, /legacy policy/, entry);
+  });
+
+  const duplicates = consentFindings([
+    'ManagePermissionGrantsForSelf.microsoft-user-default-legacy',
+    'managePermissionGrantsForSelf.MICROSOFT-USER-DEFAULT-LEGACY',
+    'ManagePermissionGrantsForSelf.microsoft-user-default-legacy'
+  ]);
+  assert.equal(duplicates.length, 1);
+  assert.equal((duplicates[0].detail.match(/legacy policy/g) || []).length, 1);
+});
+
+test('non-string and blank consent entries are ignored', () => {
+  const junk = ['', '   ', '\n\t', null, undefined, 0, false, { id: 'microsoft-user-default-legacy' }];
+  const onlyJunk = tenantCheck(authz(null, { permissionGrantPoliciesAssigned: junk }));
+  assert.equal(onlyJunk.findings.some(item => item.id === 'td:user-consent'), false);
+  assert.equal(onlyJunk.rows.find(row => row.setting === 'User consent to apps').severity, 'unavailable');
+
+  const withLow = tenantCheck(authz(null, {
+    permissionGrantPoliciesAssigned: junk.concat('ManagePermissionGrantsForSelf.microsoft-user-default-low')
+  }));
+  assert.equal(withLow.findings.some(item => item.id === 'td:user-consent'), false);
+  assert.equal(withLow.rows.find(row => row.setting === 'User consent to apps').severity, 'ok');
+  assert.equal(withLow.rows.find(row => row.setting === 'User consent to apps').value, 'verified publishers and selected permissions');
+});
+
+test('inherited properties are not tenant-default settings', () => {
+  const inherited = Object.create({
+    allowInvitesFrom: 'everyone',
+    guestUserRoleId: GUEST_ROLE_MEMBER,
+    id: 'inherited-policy',
+    toString: () => 'everyone',
+    constructor: { allowInvitesFrom: 'everyone' },
+    defaultUserRolePermissions: {
+      allowedToCreateApps: true,
+      allowedToCreateTenants: true,
+      allowedToCreateSecurityGroups: true,
+      permissionGrantPoliciesAssigned: ['ManagePermissionGrantsForSelf.microsoft-user-default-legacy']
+    }
+  });
+  const inheritedCheck = tenantCheck({ available: true, reason: 'ok', policy: inherited });
+  assert.equal(inheritedCheck.findings.length, 0);
+  inheritedCheck.rows.forEach(row => assert.equal(row.severity, 'unavailable', row.setting));
+
+  const permProto = {
+    allowedToCreateApps: true,
+    allowedToCreateTenants: true,
+    permissionGrantPoliciesAssigned: ['ManagePermissionGrantsForSelf.microsoft-user-default-legacy']
+  };
+  const ownPerms = Object.create(permProto);
+  ownPerms.allowedToCreateSecurityGroups = true;
+  const policy = Object.create({
+    allowInvitesFrom: 'everyone',
+    guestUserRoleId: GUEST_ROLE_MEMBER,
+    id: 'inherited-id'
+  });
+  policy.defaultUserRolePermissions = ownPerms;
+  const mixed = tenantCheck({ available: true, reason: 'ok', policy });
+  assert.equal(mixed.findings.length, 0);
+  assert.equal(mixed.rows.find(row => row.setting === 'Users can register applications').severity, 'unavailable');
+  assert.equal(mixed.rows.find(row => row.setting === 'Users can create tenants').severity, 'unavailable');
+  assert.equal(mixed.rows.find(row => row.setting === 'User consent to apps').severity, 'unavailable');
+  assert.equal(mixed.rows.find(row => row.setting === 'Who can invite guests').severity, 'unavailable');
+  assert.equal(mixed.rows.find(row => row.setting === 'Guest directory access').severity, 'unavailable');
+  assert.equal(mixed.rows.find(row => row.setting === 'Users can create security groups').value, 'Any member');
+  assert.equal(mixed.rows.find(row => row.setting === 'Users can create security groups').severity, 'ok');
+  assert.equal(mixed.findings.some(item => item.subjectId === 'inherited-id'), false);
+
+  const nullProto = Object.create(null);
+  nullProto.id = 'authorizationPolicy';
+  nullProto.allowInvitesFrom = 'everyone';
+  nullProto.guestUserRoleId = GUEST_ROLE_RESTRICTED;
+  nullProto.defaultUserRolePermissions = Object.create(null);
+  nullProto.defaultUserRolePermissions.allowedToCreateApps = false;
+  nullProto.defaultUserRolePermissions.allowedToCreateTenants = false;
+  nullProto.defaultUserRolePermissions.allowedToCreateSecurityGroups = true;
+  nullProto.defaultUserRolePermissions.permissionGrantPoliciesAssigned = ['ManagePermissionGrantsForSelf.microsoft-user-default-low'];
+  const fromNull = tenantCheck({ available: true, reason: 'ok', policy: nullProto });
+  assert.deepEqual(fromNull.findings.map(item => item.id), ['td:guest-invites']);
+  assert.equal(fromNull.findings[0].subjectId, 'authorizationPolicy');
+});
+
+test('an array, scalar, or collection envelope is not a readable policy', () => {
+  function unreadable(policy) {
+    const report = h.analyze(base({ authorizationPolicy: { available: true, reason: 'ok', policy } }));
+    const check = report.checks.tenantDefaults;
+    assert.equal(check.available, false);
+    assert.equal(check.status, 'unavailable');
+    assert.equal(check.findings.length, 0);
+    assert.equal(check.rows.length, 0);
+    assert.equal(check.headline, 'Tenant defaults unavailable');
+    assert.notEqual(check.headline, 'No risky default in the settings Microsoft returned');
+    assert.ok(report.unavailable.includes('tenantDefaults'));
+    return check;
+  }
+  const risky = authz({
+    allowInvitesFrom: 'everyone',
+    guestUserRoleId: GUEST_ROLE_MEMBER
+  }, {
+    allowedToCreateApps: true,
+    allowedToCreateTenants: true,
+    permissionGrantPoliciesAssigned: ['ManagePermissionGrantsForSelf.microsoft-user-default-legacy']
+  }).policy;
+  [[], ['not-a-policy'], 'authorizationPolicy', 1, true, { value: [risky] }, { value: [] }].forEach(unreadable);
+
+  const empty = tenantCheck({ available: true, reason: 'ok', policy: {} });
+  assert.equal(empty.available, true);
+  assert.equal(empty.findings.length, 0);
+  assert.equal(empty.rows.length > 0, true);
+  empty.rows.forEach(row => assert.equal(row.severity, 'unavailable', row.setting));
+  assert.match(empty.note, /not judged/);
+});
+
+test('an unavailable authorization policy produces no findings', () => {
+  const risky = authz({
+    allowInvitesFrom: 'everyone',
+    guestUserRoleId: GUEST_ROLE_MEMBER
+  }, {
+    allowedToCreateApps: true,
+    allowedToCreateTenants: true,
+    permissionGrantPoliciesAssigned: ['ManagePermissionGrantsForSelf.microsoft-user-default-legacy']
+  }).policy;
+  const report = h.analyze(base({
+    groups: [{ id: 'g', displayName: 'Finance', securityEnabled: true, owners: [], members: [] }],
+    authorizationPolicy: {
+      available: false,
+      reason: 'permission',
+      message: h.unavailableMessage('tenantDefaults', 'permission'),
+      policy: risky
+    }
+  }));
+  const check = report.checks.tenantDefaults;
+  assert.equal(check.available, false);
+  assert.equal(check.status, 'unavailable');
+  assert.equal(check.findings.length, 0);
+  assert.deepEqual(check.counts, { high: 0, medium: 0, low: 0 });
+  assert.ok(report.unavailable.includes('tenantDefaults'));
+  assert.equal(report.checks.groups.counts.high, 1);
+  assert.equal(check.stats.judged, undefined);
+});
+
+test('each tenant-default finding keeps its own subject id and steps', () => {
+  const check = tenantCheck(authz({
+    allowInvitesFrom: 'everyone',
+    guestUserRoleId: GUEST_ROLE_MEMBER
+  }, {
+    allowedToCreateApps: true,
+    allowedToCreateTenants: true,
+    permissionGrantPoliciesAssigned: ['ManagePermissionGrantsForSelf.microsoft-user-default-legacy']
+  }));
+  const found = byId(check);
+  check.findings.forEach(item => {
+    assert.equal(item.subjectId, 'authorizationPolicy');
+    assert.ok(item.steps.length >= 3);
+  });
+
+  const apps = found['td:create-apps'].steps.join('\n');
+  const tenants = found['td:create-tenants'].steps.join('\n');
+  const invites = found['td:guest-invites'].steps.join('\n');
+  const role = found['td:guest-role'].steps.join('\n');
+  const consent = found['td:user-consent'].steps.join('\n');
+
+  assert.match(apps, /Users can register applications/);
+  assert.match(apps, /Application Developer/);
+  assert.doesNotMatch(apps, /Restrict non-admin users from creating tenants|Tenant Creator|Guests can invite|Guest user access|configure-user-consent/);
+  assert.match(tenants, /Restrict non-admin users from creating tenants/);
+  assert.match(tenants, /Tenant Creator/);
+  assert.doesNotMatch(tenants, /Application Developer|Guests can invite|Guest user access|configure-user-consent/);
+  assert.match(invites, /Guests can invite/);
+  assert.match(invites, /entitlement-management-external-users/);
+  assert.doesNotMatch(invites, /Guest user access|Tenant Creator|Application Developer|Restrict non-admin users from creating tenants|configure-user-consent/);
+  assert.match(role, /Guest user access/);
+  assert.match(role, /users-restrict-guest-permissions/);
+  assert.doesNotMatch(role, /Tenant Creator|Restrict non-admin users from creating tenants|Application Developer|Guests can invite|configure-user-consent/);
+  assert.match(consent, /configure-user-consent/);
+  assert.match(consent, /verified publisher/);
+  assert.doesNotMatch(consent, /Tenant Creator|Restrict non-admin users from creating tenants|Application Developer|Guests can invite|Guest user access/);
+
+  const missingId = tenantCheck(authz({ id: undefined, allowInvitesFrom: 'everyone' }));
+  const inviteFinding = missingId.findings.find(item => item.id === 'td:guest-invites');
+  assert.ok(inviteFinding);
+  assert.equal(inviteFinding.subjectId, '');
+});
+
+test('guest invite values keep their own table text', () => {
+  const want = {
+    none: 'Nobody',
+    adminsAndGuestInviters: 'Global Administrator, User Administrator, and Guest Inviter',
+    adminsGuestInvitersAndAllMembers: 'Members and guest-inviter admins',
+    everyone: 'Anyone, including guests'
+  };
+  Object.keys(want).forEach(value => {
+    const check = tenantCheck(authz({ allowInvitesFrom: value }));
+    const row = check.rows.find(item => item.setting === 'Who can invite guests');
+    assert.equal(row.value, want[value], value);
+  });
+  const neutral = tenantCheck(authz({
+    allowInvitesFrom: 'adminsGuestInvitersAndAllMembers',
+    guestUserRoleId: GUEST_ROLE_GUEST
+  }));
+  assert.equal(neutral.findings.length, 0);
+  assert.equal(neutral.headline, 'No flagged tenant defaults');
+  assert.doesNotMatch(neutral.headline, /Microsoft|tightened|hardened/i);
+  const roles = {
+    [GUEST_ROLE_MEMBER]: 'Same as members',
+    [GUEST_ROLE_GUEST]: 'Default limited guest',
+    [GUEST_ROLE_RESTRICTED]: 'Own profile only'
+  };
+  Object.keys(roles).forEach(value => {
+    const check = tenantCheck(authz({ guestUserRoleId: value }));
+    const row = check.rows.find(item => item.setting === 'Guest directory access');
+    assert.equal(row.value, roles[value], value);
+  });
+});
+
+test('duplicate consent policy ids are described once', () => {
+  function consent(list) {
+    return tenantCheck(authz(null, { permissionGrantPoliciesAssigned: list }));
+  }
+  const legacy = 'ManagePermissionGrantsForSelf.microsoft-user-default-legacy';
+  const duplicated = consent([legacy, legacy, legacy.toLowerCase()]);
+  const row = duplicated.rows.find(item => item.setting === 'User consent to apps');
+  assert.equal(duplicated.findings.filter(item => item.id === 'td:user-consent').length, 1);
+  assert.equal(row.value.split('the legacy policy').length - 1, 1);
+  assert.equal(duplicated.findings[0].detail.split('legacy policy').length - 1, 1);
+  const safe = consent([
+    'ManagePermissionGrantsForSelf.microsoft-user-default-low',
+    'managePermissionGrantsForSelf.microsoft-user-default-low'
+  ]);
+  assert.equal(safe.findings.length, 0);
+  assert.equal(
+    safe.rows.find(item => item.setting === 'User consent to apps').value,
+    'verified publishers and selected permissions'
+  );
+});
+
+test('Learn quotes and page citations stay attached to the finding they support', () => {
+  const check = tenantCheck(authz({
+    allowInvitesFrom: 'everyone',
+    guestUserRoleId: GUEST_ROLE_MEMBER
+  }, {
+    allowedToCreateApps: true,
+    allowedToCreateTenants: true,
+    permissionGrantPoliciesAssigned: [
+      'ManagePermissionGrantsForSelf.microsoft-user-default-legacy',
+      'ManagePermissionGrantsForSelf.microsoft-all-application-permissions'
+    ]
+  }));
+  const found = byId(check);
+  function sentences(item) {
+    return [item.detail].concat(item.steps).flatMap(part => part.split(/(?<=\.)\s+/));
+  }
+  const inviteQuote = 'Allowing guests to invite other guests to your directory means that guest invites can occur outside of entitlement management. We recommend setting Guests can invite to No to only allow for properly governed invitations.';
+  assert.ok(found['td:guest-invites'].detail.includes('"' + inviteQuote + '"'));
+  assert.ok(found['td:guest-invites'].detail.includes('(https://learn.microsoft.com/en-us/entra/id-governance/entitlement-management-external-users)'));
+  assert.match(found['td:create-apps'].detail, /^By default, all users can register applications/);
+  assert.match(found['td:create-apps'].detail, /manage all aspects of applications they create/);
+  assert.match(found['td:create-apps'].detail, /https:\/\/learn\.microsoft\.com\/en-us\/entra\/identity\/role-based-access-control\/delegate-app-roles/);
+  assert.match(found['td:create-tenants'].detail, /https:\/\/learn\.microsoft\.com\/en-us\/entra\/fundamentals\/users-default-permissions/);
+  assert.match(found['td:create-tenants'].detail, /https:\/\/learn\.microsoft\.com\/en-us\/entra\/fundamentals\/zero-trust-protect-tenants/);
+  assert.match(found['td:guest-role'].detail, /https:\/\/learn\.microsoft\.com\/en-us\/entra\/identity\/users\/users-restrict-guest-permissions/);
+  assert.ok(found['td:user-consent'].detail.includes('for any application (https://learn.microsoft.com/en-us/entra/identity/enterprise-apps/configure-user-consent).'));
+  assert.ok(found['td:user-consent'].detail.includes('(https://learn.microsoft.com/en-us/entra/identity/enterprise-apps/manage-app-consent-policies).'));
+
+  const consentSentences = sentences(found['td:user-consent']);
+  const doNotAllow = consentSentences.filter(sentence => sentence.includes('Do not allow user consent'));
+  assert.ok(doNotAllow.length >= 1);
+  doNotAllow.forEach(sentence => {
+    assert.match(sentence, /delegate-app-roles/);
+    assert.doesNotMatch(sentence, /configure-user-consent/);
+  });
+  const publisher = consentSentences.filter(sentence => sentence.includes('published by a verified publisher'));
+  assert.ok(publisher.length >= 1);
+  publisher.forEach(sentence => {
+    assert.match(sentence, /configure-user-consent/);
+    assert.doesNotMatch(sentence, /delegate-app-roles/);
+    assert.doesNotMatch(sentence, /Do not allow user consent/);
+  });
+
+  check.findings.forEach(item => {
+    assert.match(item.detail, /OwnerMap rates this (high|medium) because/, item.id);
+    assert.doesNotMatch(item.detail + '\n' + item.steps.join('\n'), /Microsoft (recommends|warns)|increased-security/, item.id);
+  });
+  assert.match(check.explanation, /security groups/);
+  assert.match(check.explanation, /default limited guest role/);
+  assert.match(check.explanation, /not findings/);
+});
+
+test('the headline counts findings and is clean only when nothing is flagged', () => {
+  assert.equal(tenantCheck(authz()).headline, 'No flagged tenant defaults');
+  [
+    authz(null, { allowedToCreateApps: true }),
+    authz(null, { allowedToCreateTenants: true }),
+    authz({ allowInvitesFrom: 'everyone' }),
+    authz({ guestUserRoleId: GUEST_ROLE_MEMBER }),
+    authz(null, { permissionGrantPoliciesAssigned: ['ManagePermissionGrantsForSelf.microsoft-user-default-legacy'] })
+  ].forEach(policy => {
+    const check = tenantCheck(policy);
+    assert.equal(check.findings.length, 1);
+    assert.equal(check.headline, '1 risky default');
+    assert.doesNotMatch(check.headline, /No flagged/);
+  });
+  const all = tenantCheck(authz({
+    allowInvitesFrom: 'everyone',
+    guestUserRoleId: GUEST_ROLE_MEMBER
+  }, {
+    allowedToCreateApps: true,
+    allowedToCreateTenants: true,
+    permissionGrantPoliciesAssigned: ['ManagePermissionGrantsForSelf.microsoft-user-default-legacy']
+  }));
+  assert.equal(all.findings.length, 5);
+  assert.equal(all.headline, '5 risky defaults');
+  assert.doesNotMatch(all.headline, /No flagged/);
+  assert.equal(h.analyze(sample.build()).checks.tenantDefaults.headline, '4 risky defaults');
+});
+
+test('consent fix steps cite one Learn page each and keep the legacy clause on its page', () => {
+  const configureUserConsent = 'https://learn.microsoft.com/en-us/entra/identity/enterprise-apps/configure-user-consent';
+  const delegateAppRoles = 'https://learn.microsoft.com/en-us/entra/identity/role-based-access-control/delegate-app-roles';
+  const manageConsentPolicies = 'https://learn.microsoft.com/en-us/entra/identity/enterprise-apps/manage-app-consent-policies';
+  const quote = 'we recommend that you allow user consent only for applications that have been published by a verified publisher';
+  const steps = tenantCheck(authz(null, {
+    permissionGrantPoliciesAssigned: ['ManagePermissionGrantsForSelf.microsoft-user-default-legacy']
+  })).findings[0].steps;
+  assert.deepEqual(steps, [
+    'Open the Microsoft Entra admin center → Identity → Applications → Enterprise apps → Consent and permissions → User consent settings.',
+    configureUserConsent + ' states: "' + quote + '".',
+    delegateAppRoles + ' says to select the Do not allow user consent option. That option disables the default ability for users to consent to applications. On the configure-user-consent page, Allow user consent for apps is the legacy policy, and it applies to any application for permissions that do not require an admin.',
+    'Broad built-in policies are listed at ' + manageConsentPolicies + '. If you change the list with Microsoft Graph, keep entries that start with managePermissionGrantsForOwnedResource. An empty user-consent list means user consent is off.'
+  ]);
+  assert.equal(steps[1].includes('delegate-app-roles'), false);
+  assert.equal(steps[2].includes(configureUserConsent), false);
+  assert.equal(steps[3].includes('delegate-app-roles'), false);
+  assert.equal(steps[2].includes('Allow user consent for apps is the recommended'), false);
+});
+
+test('consent finding detail keeps each Learn sentence on its own page', () => {
+  const configureUserConsent = 'https://learn.microsoft.com/en-us/entra/identity/enterprise-apps/configure-user-consent';
+  const delegateAppRoles = 'https://learn.microsoft.com/en-us/entra/identity/role-based-access-control/delegate-app-roles';
+  const manageConsentPolicies = 'https://learn.microsoft.com/en-us/entra/identity/enterprise-apps/manage-app-consent-policies';
+  const quote = 'we recommend that you allow user consent only for applications that have been published by a verified publisher';
+  const detail = tenantCheck(authz(null, {
+    permissionGrantPoliciesAssigned: [
+      'ManagePermissionGrantsForSelf.microsoft-user-default-legacy',
+      'ManagePermissionGrantsForSelf.microsoft-all-application-permissions'
+    ]
+  })).findings[0].detail;
+  assert.ok(detail.includes(configureUserConsent + ' states: "' + quote + '".'));
+  assert.ok(detail.includes(delegateAppRoles + ' says to select the Do not allow user consent option, which disables the default ability for users to consent to applications.'));
+  assert.ok(detail.includes('An empty user-consent list means user consent is off. Policies that only cover apps the user owns are not this finding.'));
+  assert.ok(detail.includes('for any application (' + configureUserConsent + ').'));
+  assert.ok(detail.includes('(' + manageConsentPolicies + ').'));
+  detail.split(/(?<=\.)\s+/).forEach(sentence => {
+    if (sentence.includes('Do not allow user consent')) {
+      assert.match(sentence, /delegate-app-roles/);
+      assert.doesNotMatch(sentence, /configure-user-consent/);
+    }
+    if (sentence.includes('for any application (')) {
+      assert.match(sentence, /configure-user-consent/);
+      assert.doesNotMatch(sentence, /delegate-app-roles/);
+    }
+  });
+});
+
+test('a quiet tenant-defaults check is not told that action is required', () => {
+  const html = fs.readFileSync(path.join(__dirname, '..', 'ownermap.html'), 'utf8');
+  assert.match(html, /check\.id === 'tenantDefaults'\s*\?\s*'No flagged defaults in this check\.'\s*:\s*'Nothing in this check needs action\.'/);
+  assert.equal(tenantCheck(authz()).headline, 'No flagged tenant defaults');
+  assert.equal(tenantCheck(authz()).findings.length, 0);
+});
+
+test('the guest admin-role step cites the page that states it', () => {
+  const finding = tenantCheck(authz({ guestUserRoleId: GUEST_ROLE_MEMBER })).findings.find(item => item.id === 'td:guest-role');
+  const step = finding.steps.find(item => item.includes('administrator roles'));
+  assert.equal(step, 'Guest users can still be added to administrator roles regardless of this permission setting: https://learn.microsoft.com/en-us/entra/fundamentals/users-default-permissions');
+  assert.equal(step.includes('external-collaboration-settings-configure'), false);
+});
+
+test('duplicate consent ids stay in first-seen order and are written once', () => {
+  const broad = 'ManagePermissionGrantsForSelf.microsoft-all-application-permissions';
+  const duplicated = tenantCheck(authz(null, {
+    permissionGrantPoliciesAssigned: [broad, broad.toLowerCase(), broad]
+  }));
+  const finding = duplicated.findings[0];
+  assert.equal(finding.detail.split('all application permissions for any app').length - 1, 1);
+  assert.equal(
+    duplicated.rows.find(row => row.setting === 'User consent to apps').value,
+    'all application permissions for any app'
+  );
+  const safe = tenantCheck(authz(null, {
+    permissionGrantPoliciesAssigned: [
+      'ManagePermissionGrantsForSelf.microsoft-user-default-low',
+      'ManagePermissionGrantsForSelf.microsoft-user-default-recommended',
+      'managePermissionGrantsForSelf.microsoft-user-default-recommended'
+    ]
+  }));
+  assert.equal(safe.findings.length, 0);
+  assert.equal(
+    safe.rows.find(row => row.setting === 'User consent to apps').value,
+    "verified publishers and selected permissions; Microsoft's managed recommendation"
+  );
+  const two = tenantCheck(authz(null, {
+    permissionGrantPoliciesAssigned: [
+      'ManagePermissionGrantsForSelf.microsoft-all-application-permissions',
+      'ManagePermissionGrantsForSelf.microsoft-application-admin'
+    ]
+  }));
+  assert.ok(two.findings[0].detail.includes('Assigned user consent includes all application permissions for any app; the application administrator consent policy ('));
 });
