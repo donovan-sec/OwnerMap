@@ -1,0 +1,64 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4.2.2
+      - uses: actions/setup-node@v4.4.0
+        with:
+          node-version: "22"
+      # No package.json: tests use only Node built-ins, so there is nothing to install.
+      - run: node --test tests/
+
+  lint:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4.2.2
+      - uses: actions/setup-node@v4.4.0
+        with:
+          node-version: "22"
+      # The repo has no linter configured. Run ESLint recommended rules with a
+      # throwaway config kept outside the repo.
+      - name: Install ESLint
+        working-directory: ${{ runner.temp }}
+        run: |
+          npm init -y > /dev/null
+          npm install --no-audit --no-fund eslint@9.39.1 @eslint/js@9.39.1 globals@16.5.0
+          cat > eslint.config.mjs <<'CFG'
+          import js from "@eslint/js";
+          import globals from "globals";
+          export default [
+            js.configs.recommended,
+            {
+              files: ["**/*.js"],
+              languageOptions: {
+                sourceType: "commonjs",
+                globals: { ...globals.node, ...globals.browser },
+              },
+            },
+          ];
+          CFG
+      - name: ESLint
+        run: '"$RUNNER_TEMP/node_modules/.bin/eslint" -c "$RUNNER_TEMP/eslint.config.mjs" src tests'
+
+  secret-scan:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@v4.2.2
+        with:
+          fetch-depth: 0
+      - uses: gitleaks/gitleaks-action@v2.3.9
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
