@@ -17,7 +17,7 @@ jobs:
         with:
           node-version: "22"
       # No package.json: tests use only Node built-ins, so there is nothing to install.
-      - run: node --test tests/
+      - run: node --test tests/*.test.js
 
   lint:
     runs-on: ubuntu-24.04
