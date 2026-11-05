@@ -54,6 +54,8 @@ The signed-in person also needs a directory role that can read these objects. **
 
 Your own IT staff register the app in your tenant. The step-by-step guide is [docs/SETUP.md](docs/SETUP.md), including who needs which Entra role, what to do when you cannot grant admin consent, and a copy-paste prompt for ChatGPT, Claude, or Grok. There is no paid setup service.
 
+How to stop regular users from registering apps and granting app access is in [docs/stop-users-registering-apps-microsoft-365.md](docs/stop-users-registering-apps-microsoft-365.md).
+
 The recommended path is [scripts/Register-OwnerMap.ps1](scripts/Register-OwnerMap.ps1). It creates or updates one single-tenant registration, sets the **Single-page application** redirect URI, and adds exactly the eight delegated read permissions. It prints the client ID and an admin consent URL. It does not grant consent, and it does not create an application password. The sign-in that creates the registration uses `Application.ReadWrite.All` for the operator only. That permission is not added to OwnerMap.
 
 Preview the plan without signing in:
