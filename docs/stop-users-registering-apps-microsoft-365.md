@@ -6,7 +6,7 @@
       "@type": "TechArticle",
       "headline": "How to stop regular users from registering apps and granting app access in Microsoft 365",
       "author": {"@type": "Organization", "name": "OwnerMap", "url": "https://github.com/donovan-sec/OwnerMap"},
-      "dateModified": "2026-10-28",
+      "dateModified": "2026-11-05",
       "about": ["Microsoft Entra ID user consent", "App registration", "Admin consent workflow"],
       "citation": [
         "https://learn.microsoft.com/en-us/entra/identity/enterprise-apps/configure-user-consent",
@@ -31,6 +31,7 @@
         {"@type": "Question", "name": "Can regular users register apps in Microsoft Entra ID by default?", "acceptedAnswer": {"@type": "Answer", "text": "Yes. Microsoft Learn says that by default all users can register applications and manage all aspects of the applications they create. Set Users can register applications to No to restrict it."}},
         {"@type": "Question", "name": "Can users grant third-party apps access to their data by default?", "acceptedAnswer": {"@type": "Answer", "text": "Yes, for permissions that do not require administrator consent. Microsoft's example is that a user can consent to let an app access their mailbox."}},
         {"@type": "Question", "name": "What user consent setting does Microsoft recommend?", "acceptedAnswer": {"@type": "Answer", "text": "Microsoft Learn recommends allowing user consent only for applications published by a verified publisher. Its delegation guide also describes selecting Do not allow user consent."}},
+        {"@type": "Question", "name": "Does tightening user consent revoke grants that were already given?", "acceptedAnswer": {"@type": "Answer", "text": "No. Updates to user consent settings only affect future consent operations. Existing consent grants remain unchanged until an admin reviews permissions granted to enterprise applications and revokes them."}},
         {"@type": "Question", "name": "What happens when users cannot consent to an app?", "acceptedAnswer": {"@type": "Answer", "text": "If the admin consent workflow is on, users can request admin consent and a chosen reviewer approves or denies it. Turn the workflow on before you block user consent."}},
         {"@type": "Question", "name": "Does OwnerMap change these settings?", "acceptedAnswer": {"@type": "Answer", "text": "No. OwnerMap is read-only. It reports the settings and lists steps. You make any change in the Entra admin center."}}
       ]
@@ -85,6 +86,8 @@ The options you'll see, as Learn describes them:
 
 Microsoft's guidance on that page is direct: "we recommend that you allow user consent only for applications that have been published by a verified publisher."
 
+Learn states: "Any updates to user consent settings only affect future consent operations for applications. Existing consent grants remain unchanged, and users continue to have access based on the permissions previously granted." Existing OAuth/consent grants stay until an admin reviews and revokes them. For that review, see [reviewing permissions granted to enterprise applications](https://learn.microsoft.com/en-us/entra/identity/enterprise-apps/configure-user-consent).
+
 ## The safe order: admin consent workflow first
 
 If you block user consent and stop there, people hit a wall. They can't use a tool they need, and they don't know who to ask. So they find a workaround, or they just stop telling IT.
@@ -137,6 +140,9 @@ Yes, for permissions that don't need administrator consent. Microsoft's example 
 
 **What user consent setting does Microsoft recommend?**
 Learn recommends allowing user consent only for apps from verified publishers. The delegation guide also describes **Do not allow user consent**.
+
+**Does tightening user consent revoke grants that were already given?**
+No. Updates only affect future consent operations. Existing OAuth/consent grants remain unchanged until an admin reviews and revokes them. See [reviewing permissions granted to enterprise applications](https://learn.microsoft.com/en-us/entra/identity/enterprise-apps/configure-user-consent).
 
 **What happens when users can't consent to an app?**
 With the admin consent workflow on, they send a request and your reviewer decides. Turn that on before you block consent.
